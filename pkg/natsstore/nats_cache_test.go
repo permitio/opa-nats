@@ -34,11 +34,11 @@ var _ NATSClientInterface = (*MockNATSClient)(nil)
 // Helper function to create a test NATS cache configuration
 func createTestConfig() *Config {
 	return &Config{
-		ServerURL:       "nats://localhost:4222",
-		GroupRegexPattern: ".*",
+		ServerURL:             "nats://localhost:4222",
+		GroupRegexPattern:     ".*",
 		GroupWatcherCacheSize: 10,
-		MaxGroupWatchers: 10,
-		SingleGroup: "test-group",
+		MaxGroupWatchers:      10,
+		SingleGroup:           "test-group",
 	}
 }
 
@@ -102,11 +102,11 @@ func TestNATSCache_SchemaCache_Basic(t *testing.T) {
 func TestNATSCache_SchemaCache_Eviction(t *testing.T) {
 	// Create cache with small capacity
 	config := &Config{
-		ServerURL:       "nats://localhost:4222",
-		GroupRegexPattern: ".*",
+		ServerURL:             "nats://localhost:4222",
+		GroupRegexPattern:     ".*",
 		GroupWatcherCacheSize: 2, // Small capacity
-		MaxGroupWatchers: 10,
-		SingleGroup: "test-group",
+		MaxGroupWatchers:      10,
+		SingleGroup:           "test-group",
 	}
 
 	logger := logging.Get()
@@ -115,11 +115,17 @@ func TestNATSCache_SchemaCache_Eviction(t *testing.T) {
 	evictedKeys := make([]string, 0)
 	var evictMu sync.Mutex
 
-
 	cache, err := NewGroupCache(config.GroupWatcherCacheSize, logger)
 	if err != nil {
 		t.Fatalf("Failed to create schema cache: %v", err)
 	}
+
+	// Set up eviction callback
+	cache.SetEvictCallback(func(key string, value interface{}) {
+		evictMu.Lock()
+		defer evictMu.Unlock()
+		evictedKeys = append(evictedKeys, key)
+	})
 
 	// Fill cache to capacity
 	path1 := []string{"data", "schemas", "user"}
@@ -128,13 +134,17 @@ func TestNATSCache_SchemaCache_Eviction(t *testing.T) {
 	value2 := map[string]interface{}{"type": "object", "id": "org"}
 
 	cache.Put(path1, value1)
+	cache.Get(path1) // Access to populate LRU cache
+
 	cache.Put(path2, value2)
+	cache.Get(path2) // Access to populate LRU cache
 
 	// Add one more to trigger eviction
 	path3 := []string{"data", "schemas", "project"}
 	value3 := map[string]interface{}{"type": "object", "id": "project"}
 
 	cache.Put(path3, value3)
+	cache.Get(path3) // This should trigger eviction due to LRU capacity
 
 	// Give eviction callback time to run
 	time.Sleep(10 * time.Millisecond)
@@ -156,11 +166,11 @@ func TestNATSCache_SchemaCache_Eviction(t *testing.T) {
 func TestNATSCache_SchemaCache_TTL(t *testing.T) {
 	// Create cache with short TTL
 	config := &Config{
-		ServerURL:       "nats://localhost:4222",
-		GroupRegexPattern: ".*",
+		ServerURL:             "nats://localhost:4222",
+		GroupRegexPattern:     ".*",
 		GroupWatcherCacheSize: 10,
-		MaxGroupWatchers: 10,
-		SingleGroup: "test-group",
+		MaxGroupWatchers:      10,
+		SingleGroup:           "test-group",
 	}
 
 	cache := createTestSchemaCache(t, config)
@@ -196,6 +206,10 @@ func TestNATSCache_SchemaCache_Stats(t *testing.T) {
 
 	cache.Put(path1, value1)
 	cache.Put(path2, value2)
+
+	// Access items to populate LRU cache for stats
+	cache.Get(path1)
+	cache.Get(path2)
 
 	// Test stats
 	stats := cache.GetStats()
@@ -284,6 +298,7 @@ func TestNATSCache_SchemaCache_RemoveByPrefix(t *testing.T) {
 	for _, path := range paths {
 		value := map[string]interface{}{"type": "object", "path": path}
 		cache.Put(path, value)
+		cache.Get(path) // Access to populate LRU cache
 	}
 
 	// Verify all data is there
@@ -331,6 +346,7 @@ func TestNATSCache_SchemaCache_Clear(t *testing.T) {
 	for _, path := range paths {
 		value := map[string]interface{}{"type": "object", "path": path}
 		cache.Put(path, value)
+		cache.Get(path) // Access to populate LRU cache
 	}
 
 	// Verify data is there
@@ -369,6 +385,7 @@ func TestNATSCache_SchemaCache_Keys(t *testing.T) {
 	for _, path := range paths {
 		value := map[string]interface{}{"type": "object", "path": path}
 		cache.Put(path, value)
+		cache.Get(path) // Access to populate LRU cache
 	}
 
 	// Get keys

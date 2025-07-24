@@ -32,6 +32,10 @@ func (f *PluginFactory) Store() storage.Store {
 // Validate validates the plugin configuration.
 func (f *PluginFactory) Validate(manager *plugins.Manager, config []byte) (any, error) {
 	logger := manager.Logger()
+	if logger == nil {
+		logger = logging.New() // Create a default logger for testing scenarios
+	}
+
 	// Start with empty config to properly validate required fields
 	pluginConfig := &Config{}
 

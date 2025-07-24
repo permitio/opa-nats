@@ -16,8 +16,8 @@ func TestPluginFactory_Validate(t *testing.T) {
 
 	// Test with minimal config
 	minimalConfig := map[string]interface{}{
-		"server_url": "nats://localhost:4222",
-		"bucket":     "test_bucket",
+		"server_url":   "nats://localhost:4222",
+		"single_group": "test_bucket",
 	}
 
 	configBytes, err := json.Marshal(minimalConfig)
