@@ -18,13 +18,7 @@ func main() {
 	// Each group will become its own NATS bucket
 	pluginConfig := &natsstore.Config{
 		ServerURL: "nats://localhost:4222",
-		Bucket:    "permit-groups-default", // Default bucket for non-group data
-		CacheSize: 100,
 		TTL:       natsstore.Duration(5 * time.Minute),
-
-		// Enable dynamic bucket routing
-		EnableBucketRouting: true,
-		BucketPrefix:        "", // No prefix - use group ID directly as bucket name
 
 		// Group watcher settings - MaxGroupWatchers is the LRU cache size for group watchers
 		MaxGroupWatchers:      10,

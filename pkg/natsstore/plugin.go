@@ -67,9 +67,6 @@ func (f *PluginFactory) Validate(manager *plugins.Manager, config []byte) (any, 
 
 // applyDefaults applies default values for optional configuration fields.
 func (f *PluginFactory) applyDefaults(config *Config) {
-	if config.CacheSize == 0 {
-		config.CacheSize = 1000
-	}
 	if config.TTL == 0 {
 		config.TTL = Duration(10 * time.Minute)
 	}

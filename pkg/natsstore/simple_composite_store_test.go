@@ -9,14 +9,14 @@ import (
 
 	"sync"
 
+	"github.com/open-policy-agent/opa/v1/logging"
 	"github.com/open-policy-agent/opa/v1/storage"
-	"go.uber.org/zap"
 )
 
 // Helper function to create a composite store for testing path routing
 func createTestCompositeStore(handledPathsRegex []string) *SimpleCompositeStore {
 	mockStore := NewMockStore()
-	logger := zap.NewNop().Sugar()
+	logger := logging.Get()
 	// Pass empty group regex pattern and single group for tests that don't need them
 	return NewSimpleCompositeStore(mockStore, nil, logger, handledPathsRegex, "", "")
 }
@@ -281,7 +281,7 @@ func TestSimpleCompositeStore_MockStoreHelperMethods(t *testing.T) {
 }
 
 func TestSimpleCompositeStore_MockNATSClientOperations(t *testing.T) {
-	logger := zap.NewNop().Sugar()
+	logger := logging.Get()
 	mockClient := NewMockNATSClient(logger)
 	ctx := context.Background()
 
@@ -352,7 +352,7 @@ func TestSimpleCompositeStore_MockNATSClientOperations(t *testing.T) {
 }
 
 func TestSimpleCompositeStore_MockNATSClientUpdateCallback(t *testing.T) {
-	logger := zap.NewNop().Sugar()
+	logger := logging.Get()
 	mockClient := NewMockNATSClient(logger)
 	ctx := context.Background()
 
@@ -408,7 +408,7 @@ func TestSimpleCompositeStore_MockNATSClientUpdateCallback(t *testing.T) {
 }
 
 func TestSimpleCompositeStore_MockNATSClientErrors(t *testing.T) {
-	logger := zap.NewNop().Sugar()
+	logger := logging.Get()
 	mockClient := NewMockNATSClient(logger)
 	ctx := context.Background()
 
@@ -515,7 +515,7 @@ func BenchmarkSimpleCompositeStore_MockStoreOperations(b *testing.B) {
 }
 
 func BenchmarkSimpleCompositeStore_MockNATSClientOperations(b *testing.B) {
-	logger := zap.NewNop().Sugar()
+	logger := logging.Get()
 	mockClient := NewMockNATSClient(logger)
 	ctx := context.Background()
 

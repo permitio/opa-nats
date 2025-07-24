@@ -77,11 +77,17 @@ func (nc *NATSCache) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to connect NATS client: %w", err)
 	}
 
-	if nc.config.EnableBucketRouting {
-		nc.logger.Info("NATS cache configured for bucket routing - each group will use its own bucket")
+	if nc.config.GroupRegexPattern != "" {
+		if nc.config.SingleGroup != "" {
+			nc.logger.Warn("NATS cache configured for both group regex pattern and single group, using pattern: %s", nc.config.GroupRegexPattern)
+		} else {
+			nc.logger.Info("NATS cache configured for group regex pattern: %s", nc.config.GroupRegexPattern)
+		}		
+	} else if nc.config.SingleGroup != "" {
+		nc.logger.Info("NATS cache configured for single group: %s", nc.config.SingleGroup)
 	} else {
-		nc.logger.Info("NATS cache configured for single bucket with group watchers")
-	}
+		nc.logger.Warn("NATS cache bucket routing is not configured")
+	}	
 
 	nc.started = true
 	nc.logger.Info("NATS cache started successfully")

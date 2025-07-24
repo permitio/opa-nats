@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/zap"
+	"github.com/open-policy-agent/opa/v1/logging"
 )
 
 // TestHelper interface that both *testing.T and *testing.B can implement
@@ -35,10 +35,10 @@ var _ NATSClientInterface = (*MockNATSClient)(nil)
 func createTestConfig() *Config {
 	return &Config{
 		ServerURL:       "nats://localhost:4222",
-		Bucket:          "test-bucket",
-		CacheSize:       10,
-		TTL:             Duration(5 * time.Minute),
-		RefreshInterval: Duration(30 * time.Second),
+		GroupRegexPattern: ".*",
+		GroupWatcherCacheSize: 10,
+		MaxGroupWatchers: 10,
+		SingleGroup: "test-group",
 	}
 }
 
@@ -46,8 +46,8 @@ func createTestConfig() *Config {
 func createTestSchemaCache(t TestHelper, config *Config) *GroupCache {
 	t.Helper()
 
-	logger := zap.NewNop().Sugar()
-	cache, err := NewGroupCache(config.CacheSize, time.Duration(config.TTL), logger)
+	logger := logging.Get()
+	cache, err := NewGroupCache(config.GroupWatcherCacheSize, logger)
 	if err != nil {
 		t.Fatalf("Failed to create schema cache: %v", err)
 	}
@@ -103,25 +103,20 @@ func TestNATSCache_SchemaCache_Eviction(t *testing.T) {
 	// Create cache with small capacity
 	config := &Config{
 		ServerURL:       "nats://localhost:4222",
-		Bucket:          "test-bucket",
-		CacheSize:       2, // Small capacity
-		TTL:             Duration(5 * time.Minute),
-		RefreshInterval: Duration(30 * time.Second),
+		GroupRegexPattern: ".*",
+		GroupWatcherCacheSize: 2, // Small capacity
+		MaxGroupWatchers: 10,
+		SingleGroup: "test-group",
 	}
 
-	logger := zap.NewNop().Sugar()
+	logger := logging.Get()
 
 	// Track evictions
 	evictedKeys := make([]string, 0)
 	var evictMu sync.Mutex
 
-	evictionCallback := func(key string, entry *CacheEntry) {
-		evictMu.Lock()
-		defer evictMu.Unlock()
-		evictedKeys = append(evictedKeys, key)
-	}
 
-	cache, err := NewGroupCache(config.CacheSize, time.Duration(config.TTL), logger, evictionCallback)
+	cache, err := NewGroupCache(config.GroupWatcherCacheSize, logger)
 	if err != nil {
 		t.Fatalf("Failed to create schema cache: %v", err)
 	}
@@ -153,8 +148,8 @@ func TestNATSCache_SchemaCache_Eviction(t *testing.T) {
 	}
 
 	// Verify cache size is within limits
-	if cache.Size() > config.CacheSize {
-		t.Errorf("Cache size %d should not exceed capacity %d", cache.Size(), config.CacheSize)
+	if cache.Size() > config.GroupWatcherCacheSize {
+		t.Errorf("Cache size %d should not exceed capacity %d", cache.Size(), config.GroupWatcherCacheSize)
 	}
 }
 
@@ -162,10 +157,10 @@ func TestNATSCache_SchemaCache_TTL(t *testing.T) {
 	// Create cache with short TTL
 	config := &Config{
 		ServerURL:       "nats://localhost:4222",
-		Bucket:          "test-bucket",
-		CacheSize:       10,
-		TTL:             Duration(50 * time.Millisecond), // Short TTL
-		RefreshInterval: Duration(30 * time.Second),
+		GroupRegexPattern: ".*",
+		GroupWatcherCacheSize: 10,
+		MaxGroupWatchers: 10,
+		SingleGroup: "test-group",
 	}
 
 	cache := createTestSchemaCache(t, config)

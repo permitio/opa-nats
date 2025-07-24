@@ -39,20 +39,10 @@ type Config struct {
 	TLSKey      string   `json:"tls_key,omitempty"`
 	TLSCACert   string   `json:"tls_ca_cert,omitempty"`
 	TLSInsecure bool     `json:"tls_insecure,omitempty"`
-	Subject     []string `json:"subject,omitempty"`
-
-	// K/V bucket settings
-	Bucket string `json:"bucket"`
-
-	// Dynamic bucket routing (where each group becomes its own bucket)
-	EnableBucketRouting bool   `json:"enable_bucket_routing,omitempty"` // Enable routing to group-specific buckets
-	BucketPrefix        string `json:"bucket_prefix,omitempty"`         // Prefix for dynamically created buckets
 
 	// Cache settings
-	CacheSize            int      `json:"cache_size"`
 	TTL                  Duration `json:"ttl"`
 	RefreshInterval      Duration `json:"refresh_interval"`
-	WatchPrefix          string   `json:"watch_prefix,omitempty"`
 	MaxReconnectAttempts int      `json:"max_reconnect_attempts"`
 	ReconnectWait        Duration `json:"reconnect_wait"`
 
@@ -72,11 +62,8 @@ type Config struct {
 func DefaultConfig() *Config {
 	return &Config{
 		ServerURL:             "nats://localhost:4222",
-		Bucket:                "schemas",
-		CacheSize:             1000,
 		TTL:                   Duration(10 * time.Minute),
 		RefreshInterval:       Duration(30 * time.Second),
-		WatchPrefix:           "",
 		MaxReconnectAttempts:  10,
 		ReconnectWait:         Duration(2 * time.Second),
 		MaxGroupWatchers:      10,  // Maximum concurrent group watchers (cache size)
@@ -92,10 +79,10 @@ func (c *Config) Validate() error {
 	if c.ServerURL == "" {
 		return fmt.Errorf("server_url is required")
 	}
-	if c.Bucket == "" {
-		return fmt.Errorf("bucket is required")
+	if c.GroupRegexPattern != "" && c.SingleGroup != "" {
+		return fmt.Errorf("group_regex_pattern and single_group cannot be configured together")
 	}
-	// Note: cache_size validation is done after defaults are applied
+	
 	return nil
 }
 
@@ -103,9 +90,6 @@ func (c *Config) Validate() error {
 func (c *Config) ValidateWithDefaults() error {
 	if err := c.Validate(); err != nil {
 		return err
-	}
-	if c.CacheSize <= 0 {
-		return fmt.Errorf("cache_size must be greater than 0")
 	}
 	return nil
 }

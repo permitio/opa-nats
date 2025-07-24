@@ -4,15 +4,15 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/open-policy-agent/opa/v1/logging"
 	"github.com/open-policy-agent/opa/v1/plugins"
 	"github.com/open-policy-agent/opa/v1/storage/inmem"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 )
 
 func TestPluginFactory_Validate(t *testing.T) {
-	factory := NewPluginFactory(zap.S())
+	factory := NewPluginFactory()
 
 	// Test with minimal config
 	minimalConfig := map[string]interface{}{
@@ -37,15 +37,15 @@ func TestPluginFactory_Validate(t *testing.T) {
 	config, ok := validatedConfig.(*Config)
 	assert.True(t, ok)
 	assert.Equal(t, "nats://localhost:4222", config.ServerURL)
-	assert.Equal(t, "test_bucket", config.Bucket)
+	assert.Equal(t, "test_bucket", config.SingleGroup)
 }
 
 func TestPluginFactory_New(t *testing.T) {
-	factory := NewPluginFactory(zap.S())
+	factory := NewPluginFactory()
 
 	config := DefaultConfig()
 	config.ServerURL = "nats://localhost:4222"
-	config.Bucket = "test_bucket"
+	config.SingleGroup = "test_bucket"
 
 	// Create a minimal manager for testing
 	manager := &plugins.Manager{
@@ -64,7 +64,7 @@ func TestPluginFactory_New(t *testing.T) {
 }
 
 func TestPlugin_ConfigValidation(t *testing.T) {
-	factory := NewPluginFactory(zap.S())
+	factory := NewPluginFactory()
 	manager := &plugins.Manager{Store: inmem.New()}
 
 	tests := []struct {
@@ -121,13 +121,13 @@ func TestPlugin_ConfigValidation(t *testing.T) {
 }
 
 func TestCompositeStore_PathRouting(t *testing.T) {
-	logger := zap.S()
+	logger := logging.Get()
 	originalStore := inmem.New()
 
 	// Create a minimal NATS store for testing (without actual NATS connection)
 	config := DefaultConfig()
 	config.ServerURL = "nats://localhost:4222"
-	config.Bucket = "test_bucket"
+	config.SingleGroup = "test_bucket"
 
 	// Note: We can't actually test the full NATS cache without a NATS server
 	// This test focuses on the composite store routing logic
@@ -183,8 +183,7 @@ func TestDefaultConfig(t *testing.T) {
 	config := DefaultConfig()
 
 	assert.Equal(t, "nats://localhost:4222", config.ServerURL)
-	assert.Equal(t, "schemas", config.Bucket)
-	assert.Equal(t, 1000, config.CacheSize)
+	assert.Equal(t, 100, config.GroupWatcherCacheSize)
 	assert.NotZero(t, config.TTL)
 	assert.NotZero(t, config.RefreshInterval)
 }

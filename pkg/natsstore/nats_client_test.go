@@ -8,8 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/open-policy-agent/opa/logging"
-	"go.uber.org/zap"
+	"github.com/open-policy-agent/opa/v1/logging"
 )
 
 // MockNATSClient is a mock implementation of NATS client for testing
@@ -21,12 +20,12 @@ type MockNATSClient struct {
 	getErr    error
 	putErr    error
 	deleteErr error
-	logger    *zap.SugaredLogger
+	logger    logging.Logger
 	onUpdate  func(key string, value interface{})
 }
 
 // NewMockNATSClient creates a new mock NATS client
-func NewMockNATSClient(logger *zap.SugaredLogger) *MockNATSClient {
+func NewMockNATSClient(logger logging.Logger) *MockNATSClient {
 	return &MockNATSClient{
 		data:   make(map[string]interface{}),
 		logger: logger,
@@ -167,7 +166,7 @@ func pathToStringKey(path []string) string {
 
 // Test the actual NATSClient interface compliance
 func TestNATSClientInterface(t *testing.T) {
-	logger := zap.NewNop().Sugar()
+	logger := logging.Get()
 
 	// Test that MockNATSClient implements the expected interface
 	var _ interface {
@@ -181,7 +180,7 @@ func TestNATSClientInterface(t *testing.T) {
 }
 
 func TestMockNATSClient_StartStop(t *testing.T) {
-	logger := zap.NewNop().Sugar()
+	logger := logging.Get()
 	client := NewMockNATSClient(logger)
 	ctx := context.Background()
 
@@ -212,7 +211,7 @@ func TestMockNATSClient_StartStop(t *testing.T) {
 }
 
 func TestMockNATSClient_StartError(t *testing.T) {
-	logger := zap.NewNop().Sugar()
+	logger := logging.Get()
 	client := NewMockNATSClient(logger)
 	ctx := context.Background()
 
@@ -232,7 +231,7 @@ func TestMockNATSClient_StartError(t *testing.T) {
 }
 
 func TestMockNATSClient_GetPut(t *testing.T) {
-	logger := zap.NewNop().Sugar()
+	logger := logging.Get()
 	client := NewMockNATSClient(logger)
 	ctx := context.Background()
 
@@ -275,7 +274,7 @@ func TestMockNATSClient_GetPut(t *testing.T) {
 }
 
 func TestMockNATSClient_Delete(t *testing.T) {
-	logger := zap.NewNop().Sugar()
+	logger := logging.Get()
 	client := NewMockNATSClient(logger)
 	ctx := context.Background()
 
@@ -314,7 +313,7 @@ func TestMockNATSClient_Delete(t *testing.T) {
 }
 
 func TestMockNATSClient_Errors(t *testing.T) {
-	logger := zap.NewNop().Sugar()
+	logger := logging.Get()
 	client := NewMockNATSClient(logger)
 	ctx := context.Background()
 
@@ -353,7 +352,7 @@ func TestMockNATSClient_Errors(t *testing.T) {
 }
 
 func TestMockNATSClient_UpdateCallback(t *testing.T) {
-	logger := zap.NewNop().Sugar()
+	logger := logging.Get()
 	client := NewMockNATSClient(logger)
 	ctx := context.Background()
 
@@ -410,7 +409,7 @@ func TestMockNATSClient_UpdateCallback(t *testing.T) {
 }
 
 func TestMockNATSClient_ConcurrentAccess(t *testing.T) {
-	logger := zap.NewNop().Sugar()
+	logger := logging.Get()
 	client := NewMockNATSClient(logger)
 	ctx := context.Background()
 
@@ -470,7 +469,7 @@ func TestMockNATSClient_ConcurrentAccess(t *testing.T) {
 
 // Benchmark tests
 func BenchmarkMockNATSClient_Put(b *testing.B) {
-	logger := zap.NewNop().Sugar()
+	logger := logging.Get()
 	client := NewMockNATSClient(logger)
 	ctx := context.Background()
 
@@ -493,7 +492,7 @@ func BenchmarkMockNATSClient_Put(b *testing.B) {
 }
 
 func BenchmarkMockNATSClient_Get(b *testing.B) {
-	logger := zap.NewNop().Sugar()
+	logger := logging.Get()
 	client := NewMockNATSClient(logger)
 	ctx := context.Background()
 
@@ -539,8 +538,6 @@ func TestBucketRouting(t *testing.T) {
 		{
 			name: "bucket routing disabled - use default bucket",
 			config: &Config{
-				Bucket:              "default-bucket",
-				EnableBucketRouting: false,
 				GroupRegexPattern:   "^groups\\.([0-9a-f-]+)\\..*",
 			},
 			path:           []string{"groups", "550e8400-e29b-41d4-a716-446655440000", "metadata"},
@@ -549,10 +546,7 @@ func TestBucketRouting(t *testing.T) {
 		{
 			name: "bucket routing enabled - extract group ID",
 			config: &Config{
-				Bucket:              "default-bucket",
-				EnableBucketRouting: true,
 				GroupRegexPattern:   "^groups\\.([0-9a-f-]+)\\..*",
-				BucketPrefix:        "",
 			},
 			path:           []string{"groups", "550e8400-e29b-41d4-a716-446655440000", "metadata"},
 			expectedBucket: "550e8400-e29b-41d4-a716-446655440000",
@@ -560,10 +554,7 @@ func TestBucketRouting(t *testing.T) {
 		{
 			name: "bucket routing enabled with prefix",
 			config: &Config{
-				Bucket:              "default-bucket",
-				EnableBucketRouting: true,
 				GroupRegexPattern:   "^groups\\.([0-9a-f-]+)\\..*",
-				BucketPrefix:        "group-",
 			},
 			path:           []string{"groups", "550e8400-e29b-41d4-a716-446655440000", "members", "user1"},
 			expectedBucket: "group-550e8400-e29b-41d4-a716-446655440000",
@@ -571,8 +562,6 @@ func TestBucketRouting(t *testing.T) {
 		{
 			name: "no group match - use default bucket",
 			config: &Config{
-				Bucket:              "default-bucket",
-				EnableBucketRouting: true,
 				GroupRegexPattern:   "^groups\\.([0-9a-f-]+)\\..*",
 			},
 			path:           []string{"users", "123e4567-e89b-12d3-a456-426614174000", "groups"},
@@ -581,8 +570,6 @@ func TestBucketRouting(t *testing.T) {
 		{
 			name: "single group mode",
 			config: &Config{
-				Bucket:              "default-bucket",
-				EnableBucketRouting: true,
 				SingleGroup:         "my-single-group",
 			},
 			path:           []string{"groups", "anything", "metadata"},

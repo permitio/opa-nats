@@ -103,30 +103,7 @@ func (nc *NATSClient) connect() error {
 	}
 	nc.js = js
 
-	// Get or create K/V bucket
-	kv, err := js.KeyValue(nc.config.Bucket)
-	if err != nil {
-		// Try to create the bucket if it doesn't exist
-		_, err = js.CreateKeyValue(&nats.KeyValueConfig{
-			Bucket: nc.config.Bucket,
-			TTL:    time.Duration(nc.config.TTL),
-		})
-		if err != nil {
-			return fmt.Errorf("failed to create K/V bucket: %w", err)
-		}
-
-		kv, err = js.KeyValue(nc.config.Bucket)
-		if err != nil {
-			return fmt.Errorf("failed to get K/V bucket: %w", err)
-		}
-	}
-	nc.kv = kv
-
-	if nc.config.EnableBucketRouting {
-		nc.logger.Info("Connected to NATS at %s, default bucket: %s (bucket routing enabled - groups will use separate buckets)", nc.config.ServerURL, nc.config.Bucket)
-	} else {
-		nc.logger.Info("Connected to NATS at %s, using K/V bucket: %s", nc.config.ServerURL, nc.config.Bucket)
-	}
+	nc.logger.Info("Connected to NATS at %s", nc.config.ServerURL)
 	return nil
 }
 
@@ -232,11 +209,6 @@ func (nc *NATSClient) pathToKey(path []string) string {
 
 // pathToKeyInBucket converts a path slice to a NATS K/V key, stripping the group prefix.
 func (nc *NATSClient) pathToKeyInBucket(path []string, bucketName string) string {
-	// If bucket routing is not enabled, use the full path
-	if !nc.config.EnableBucketRouting {
-		return nc.pathToKey(path)
-	}
-
 	// Try to extract group and find where it ends in the path
 	if nc.config.GroupRegexPattern != "" {
 		pathStr := strings.Join(path, ".")
@@ -332,27 +304,17 @@ func (nc *NATSClient) getOrCreateBucket(bucketName string) (nats.KeyValue, error
 
 // determineBucket determines which bucket to use for a given path.
 func (nc *NATSClient) determineBucket(path []string) string {
-	// If bucket routing is not enabled, use the default bucket
-	if !nc.config.EnableBucketRouting {
-		nc.logger.Debug("Bucket routing disabled, using default bucket: %s", nc.config.Bucket)
-		return nc.config.Bucket
-	}
-
 	// Extract group UUID from path using bucket regex patterns
 	group := nc.extractGroupForBucket(path)
 	if group == "" {
 		// No group found, use default bucket
-		nc.logger.Debug("No group found in path %v, using default bucket: %s", path, nc.config.Bucket)
-		return nc.config.Bucket
+		nc.logger.Debug("No group found in path %v, using default bucket: %s", path, nc.config.SingleGroup)
+		return nc.config.SingleGroup
 	}
 
 	// Construct bucket name with optional prefix
 	var bucketName string
-	if nc.config.BucketPrefix != "" {
-		bucketName = nc.config.BucketPrefix + group
-	} else {
-		bucketName = group
-	}
+	bucketName = group
 
 	nc.logger.Debug("Extracted group '%s' from path %v, routing to bucket: %s", group, path, bucketName)
 	return bucketName
