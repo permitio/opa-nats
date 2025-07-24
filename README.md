@@ -1,0 +1,1 @@
+# NATS Plugin for OPA
