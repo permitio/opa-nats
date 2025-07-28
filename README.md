@@ -339,3 +339,28 @@ See the [LICENSE](LICENSE) file for details.
 ## Contributing
 
 Contributions are welcome! Please open issues or pull requests on the [opa-nats GitHub repository](https://github.com/permitio/opa-nats) for bug reports, feature requests, or improvements related to the `nats-store` library. 
+
+## Development: pre-commit hooks
+
+This repository uses [pre-commit](https://pre-commit.com/) to enforce Go best practices and code quality. Hooks include:
+- `golangci-lint` (linting)
+- `go fmt` (formatting)
+- `go vet` (static analysis)
+- `go mod tidy` (module tidiness)
+- Trailing whitespace and end-of-file checks
+
+### Setup
+1. Install pre-commit (requires Python):
+   ```sh
+   pip install pre-commit
+   ```
+2. Install the git hook scripts:
+   ```sh
+   pre-commit install
+   ```
+3. Run all hooks on all files (before pushing):
+   ```sh
+   pre-commit run --all-files
+   ```
+
+> All CI checks will run these hooks. Please ensure your code passes before submitting a PR. 

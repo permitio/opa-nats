@@ -21,8 +21,13 @@
             "args": [
                 "run",
                 "--server",
+                "--config-file",
+                "${workspaceFolder}/examples/handledpaths/config-compose.yaml",
                 "--log-format",
-                "text"
+                "text",
+                "--log-level",
+                "debug",
+                "${workspaceFolder}/examples/handledpaths/rego"
             ]
         }
     ]

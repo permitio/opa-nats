@@ -30,15 +30,15 @@ func (d Duration) String() string {
 // Config represents the NATS K/V store plugin configuration.
 type Config struct {
 	// NATS connection settings
-	ServerURL   string   `json:"server_url"`
-	Credentials string   `json:"credentials,omitempty"`
-	Token       string   `json:"token,omitempty"`
-	Username    string   `json:"username,omitempty"`
-	Password    string   `json:"password,omitempty"`
-	TLSCert     string   `json:"tls_cert,omitempty"`
-	TLSKey      string   `json:"tls_key,omitempty"`
-	TLSCACert   string   `json:"tls_ca_cert,omitempty"`
-	TLSInsecure bool     `json:"tls_insecure,omitempty"`
+	ServerURL   string `json:"server_url"`
+	Credentials string `json:"credentials,omitempty"`
+	Token       string `json:"token,omitempty"`
+	Username    string `json:"username,omitempty"`
+	Password    string `json:"password,omitempty"`
+	TLSCert     string `json:"tls_cert,omitempty"`
+	TLSKey      string `json:"tls_key,omitempty"`
+	TLSCACert   string `json:"tls_ca_cert,omitempty"`
+	TLSInsecure bool   `json:"tls_insecure,omitempty"`
 
 	// Cache settings
 	TTL                  Duration `json:"ttl"`
@@ -46,16 +46,12 @@ type Config struct {
 	MaxReconnectAttempts int      `json:"max_reconnect_attempts"`
 	ReconnectWait        Duration `json:"reconnect_wait"`
 
-	// Group-based watcher settings (MaxGroupWatchers is the LRU cache size for group watchers)
-	MaxGroupWatchers      int    `json:"max_group_watchers,omitempty"`       // LRU cache size for group watchers
-	GroupRegexPattern     string `json:"group_regex_pattern,omitempty"`      // Regex pattern to extract group from paths (also used for bucket routing)
-	GroupWatcherCacheSize int    `json:"group_watcher_cache_size,omitempty"` // Cache size per group watcher
+	// Bucket-based watcher settings (MaxBucketsWatchers is the LRU cache size for bucket watchers)
+	MaxBucketsWatchers       int    `json:"max_bucket_watchers,omitempty"`        // LRU cache size for bucket watchers
 
-	// Single group mode (alternative to group patterns)
-	SingleGroup string `json:"single_group,omitempty"` // Explicit group name to always use
+	// root bucket name
+	RootBucket            string `json:"root_bucket,omitempty"`              // Explicit bucket name to always use
 
-	// Handled paths as regex (if empty, use default paths)
-	HandledPathsRegex []string `json:"handled_paths_regex,omitempty"`
 }
 
 // DefaultConfig returns a default configuration.
@@ -66,11 +62,8 @@ func DefaultConfig() *Config {
 		RefreshInterval:       Duration(30 * time.Second),
 		MaxReconnectAttempts:  10,
 		ReconnectWait:         Duration(2 * time.Second),
-		MaxGroupWatchers:      10,  // Maximum concurrent group watchers (cache size)
-		GroupWatcherCacheSize: 100, // Cache size per group watcher
-		GroupRegexPattern:     "",  // Must be configured by user
-		SingleGroup:           "",  // Optional single group mode
-		HandledPathsRegex:     nil, // default to nil, handled in logic
+		MaxBucketsWatchers:       10,  // Maximum concurrent bucket watchers (cache size)
+		RootBucket:            "",  // Optional single bucket mode
 	}
 }
 
@@ -78,11 +71,8 @@ func DefaultConfig() *Config {
 func (c *Config) Validate() error {
 	if c.ServerURL == "" {
 		return fmt.Errorf("server_url is required")
-	}
-	if c.GroupRegexPattern != "" && c.SingleGroup != "" {
-		return fmt.Errorf("group_regex_pattern and single_group cannot be configured together")
-	}
-	
+	}		
+
 	return nil
 }
 

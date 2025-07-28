@@ -66,12 +66,12 @@ services:
         
         # Create individual buckets for each group UUID
         echo 'Creating group UUID buckets...';
-        nats kv add 550e8400-e29b-41d4-a716-446655440000 --replicas=1 --history=10 --ttl=1h;
-        nats kv add 660e8400-e29b-41d4-a716-446655440001 --replicas=1 --history=10 --ttl=1h;
-        nats kv add 770e8400-e29b-41d4-a716-446655440002 --replicas=1 --history=10 --ttl=1h;
+        nats kv add 550e8400-e29b-41d4-a716-446655440000 --replicas=1 --history=10 --ttl=12h;
+        nats kv add 660e8400-e29b-41d4-a716-446655440001 --replicas=1 --history=10 --ttl=12h;
+        nats kv add 770e8400-e29b-41d4-a716-446655440002 --replicas=1 --history=10 --ttl=12h;
         
         # Create default bucket for non-group data (users)
-        nats kv add permit-groups-default --replicas=1 --history=10 --ttl=1h;
+        nats kv add permit-groups-default --replicas=1 --history=10 --ttl=12h;
         
         echo 'All buckets created successfully';
         
@@ -97,10 +97,13 @@ services:
         
         echo 'Populating default bucket with user group assignments...';
         # User-group assignments go to the default bucket since they are not group-specific
-        nats kv put permit-groups-default users.123e4567-e89b-12d3-a456-426614174000.groups '[\"550e8400-e29b-41d4-a716-446655440000\"]';
-        nats kv put permit-groups-default users.234e5678-e89b-12d3-a456-426614174001.groups '[\"550e8400-e29b-41d4-a716-446655440000\",\"660e8400-e29b-41d4-a716-446655440001\"]';
-        nats kv put permit-groups-default users.345e6789-e89b-12d3-a456-426614174002.groups '[\"660e8400-e29b-41d4-a716-446655440001\"]';
-        nats kv put permit-groups-default users.456e7890-e89b-12d3-a456-426614174003.groups '[\"770e8400-e29b-41d4-a716-446655440002\"]';
+        nats kv put permit-groups-default metadata '{\"id\":\"permit-groups-default\",\"name\":\"Default Group\",\"description\":\"Default group for non-grouped data\",\"created_at\":\"2024-01-15T10:00:00Z\"}';
+
+        nats kv put permit-groups-default users '[\"550e8400-e29b-41d4-a716-446655440000\",\"660e8400-e29b-41d4-a716-446655440001\"]';
+        # nats kv put permit-groups-default users.234e5678-e89b-12d3-a456-426614174001.groups '[\"150e8400-e29b-41d4-a716-446655440000\",\"660e8400-e29b-41d4-a716-446655440001\"]';
+        # nats kv put permit-groups-default users.345e6789-e89b-12d3-a456-426614174002.groups '[\"160e8400-e29b-41d4-a716-446655440001\"]';
+        # nats kv put permit-groups-default users.456e7890-e89b-12d3-a456-426614174003.groups '[\"170e8400-e29b-41d4-a716-446655440002\"]';
+        # nats kv put permit-groups-default users.123e4567-e89b-12d3-a456-426614174000.groups '[\"150e8400-e29b-41d4-a716-446655440000\"]';
         
         echo 'Test data added successfully';
         echo '';
@@ -124,7 +127,26 @@ services:
     networks:
       - nats-net
 
-  # Optional: permit-opa application for testing
+  # OPA with NATS store plugin
+  opa:
+    build:
+      context: ../../
+      dockerfile: examples/handledpaths/Dockerfile
+    container_name: opa-server
+    depends_on:
+      nats:
+        condition: service_healthy
+      nats-setup:
+        condition: service_completed_successfully
+    ports:
+      - "8181:8181"
+    volumes:
+      - ./config.yaml:/config/config.yaml
+      - ./rego:/policies
+    environment:
+      - NATS_URL=nats://nats:4222
+    networks:
+      - nats-net
 
 volumes:
   nats_data:
