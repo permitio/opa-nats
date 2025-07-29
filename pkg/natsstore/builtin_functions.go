@@ -8,7 +8,7 @@ import (
 	"github.com/open-policy-agent/opa/v1/storage"
 )
 
-// BucketDataManager manages group data loading and injection into OPA store
+// BucketDataManager manages bucket data loading and injection into OPA store
 type BucketDataManager struct {
 	natsClient      *NATSClient
 	watcherManager  *BucketWatcherManager
@@ -18,7 +18,7 @@ type BucketDataManager struct {
 	started         bool
 }
 
-// NewBucketDataManager creates a new group data manager
+// NewBucketDataManager creates a new bucket data manager
 func NewBucketDataManager(config *Config, logger logging.Logger) (*BucketDataManager, error) {
 	// Create NATS client
 	natsClient, err := NewNATSClient(config, logger)
@@ -26,10 +26,10 @@ func NewBucketDataManager(config *Config, logger logging.Logger) (*BucketDataMan
 		return nil, fmt.Errorf("failed to create NATS client: %w", err)
 	}
 
-	// Create group watcher manager
+	// Create bucket watcher manager
 	watcherManager, err := NewBucketWatcherManager(natsClient, config.MaxBucketsWatchers, logger, config)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create group watcher manager: %w", err)
+		return nil, fmt.Errorf("failed to create bucket watcher manager: %w", err)
 	}
 
 	// Create data transformer
@@ -47,7 +47,7 @@ func NewBucketDataManager(config *Config, logger logging.Logger) (*BucketDataMan
 	}, nil
 }
 
-// Start initializes the group data manager
+// Start initializes the bucket data manager
 func (gdm *BucketDataManager) Start(ctx context.Context) error {
 	if gdm.started {
 		return nil
@@ -59,23 +59,23 @@ func (gdm *BucketDataManager) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop shuts down the group data manager
+// Stop shuts down the bucket data manager
 func (gdm *BucketDataManager) Stop(ctx context.Context) error {
 	if !gdm.started {
 		return nil
 	}
 
 	if err := gdm.watcherManager.Stop(); err != nil {
-		gdm.logger.Error("Error stopping group watcher manager: %v", err)
+		gdm.logger.Error("Error stopping bucket watcher manager: %v", err)
 	}
 
 	// NATS client doesn't have Stop method - connection is managed via config
 	gdm.started = false
-	gdm.logger.Info("Group data manager stopped")
+	gdm.logger.Info("Bucket data manager stopped")
 	return nil
 }
 
-// EnsureGroupLoaded ensures a group is watched and all data is loaded into OPA store
+// EnsureBucketLoaded ensures a bucket is watched and all data is loaded into OPA store
 func (gdm *BucketDataManager) EnsureBucketLoaded(ctx context.Context, bucketName string, opaStore storage.Store, isRoot bool) error {
 	gdm.logger.Debug("Ensuring bucket %s is loaded into OPA store", bucketName)
 

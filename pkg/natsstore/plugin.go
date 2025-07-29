@@ -51,7 +51,7 @@ func (f *PluginFactory) watchBucketBuiltin(bctx rego.BuiltinContext, inputTerm *
 	}
 
 	// Bucket not watched yet - load data into cache and start watching
-	bucketGjson, err := f.loadBucketAsGJSON(bctx.Context, bucketName)
+	bucketGjson, err := f.loadBucketAsGJSON(bucketName)
 	if err != nil {
 		if errors.Is(err, nats.ErrBucketNotFound) {
 			return ast.BooleanTerm(false), nil
@@ -94,7 +94,7 @@ func (f *PluginFactory) getDataBuiltin(bctx rego.BuiltinContext, bucketTerm *ast
 	// Cache miss - load directly from NATS with warning
 	f.logger.Warn("Warning: Cache miss for bucket %s, key %s. Loading directly from NATS.\n", bucketName, dotNotationKey)
 
-	bucketGjson, err := f.loadBucketAsGJSON(bctx.Context, bucketName)
+	bucketGjson, err := f.loadBucketAsGJSON(bucketName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load bucket data: %w", err)
 	}
@@ -112,7 +112,7 @@ func (f *PluginFactory) getDataBuiltin(bctx rego.BuiltinContext, bucketTerm *ast
 	return ast.NullTerm(), nil
 }
 
-func (f *PluginFactory) loadBucketAsGJSON(ctx context.Context, bucketName string) (*gjson.Result, error) {
+func (f *PluginFactory) loadBucketAsGJSON(bucketName string) (*gjson.Result, error) {
 	// Get the bucket
 	kv, err := f.bucketDataManager.natsClient.getBucket(bucketName)
 	if err != nil {
@@ -164,38 +164,6 @@ func (f *PluginFactory) gjsonResultToASTTerm(result gjson.Result) *ast.Term {
 		return ast.NewTerm(ast.MustInterfaceToValue(value))
 	default:
 		return ast.NullTerm()
-	}
-}
-
-func (f *PluginFactory) interfaceToASTTerm(value interface{}) *ast.Term {
-	switch v := value.(type) {
-	case string:
-		return ast.StringTerm(v)
-	case float64:
-		return ast.NumberTerm(json.Number(fmt.Sprintf("%g", v)))
-	case int:
-		return ast.NumberTerm(json.Number(fmt.Sprintf("%d", v)))
-	case bool:
-		return ast.BooleanTerm(v)
-	case nil:
-		return ast.NullTerm()
-	case []interface{}:
-		// Convert array
-		terms := make([]*ast.Term, len(v))
-		for i, item := range v {
-			terms[i] = f.interfaceToASTTerm(item)
-		}
-		return ast.ArrayTerm(terms...)
-	case map[string]interface{}:
-		// Convert object
-		obj := ast.NewObject()
-		for key, val := range v {
-			obj.Insert(ast.StringTerm(key), f.interfaceToASTTerm(val))
-		}
-		return ast.NewTerm(obj)
-	default:
-		// Fallback to string representation
-		return ast.StringTerm(fmt.Sprintf("%v", v))
 	}
 }
 
@@ -263,10 +231,10 @@ func (f *PluginFactory) Validate(manager *plugins.Manager, config []byte) (any, 
 	// Store reference to original store
 	f.originalStore = manager.Store
 
-	// Create the group data manager (new architecture)
+	// Create the bucket data manager (new architecture)
 	bucketDataManager, err := NewBucketDataManager(pluginConfig, logger)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create group data manager: %w", err)
+		return nil, fmt.Errorf("failed to create bucket data manager: %w", err)
 	}
 
 	f.bucketDataManager = bucketDataManager
@@ -324,7 +292,7 @@ func (p *Plugin) Start(ctx context.Context) error {
 	p.logger.Info("Starting NATS K/V data injection plugin")
 
 	if err := p.bucketDataManager.Start(ctx); err != nil {
-		return fmt.Errorf("failed to start group data manager: %w", err)
+		return fmt.Errorf("failed to start bucket data manager: %w", err)
 	}
 
 	// If we have a root bucket configured, load it immediately
@@ -344,7 +312,7 @@ func (p *Plugin) Stop(ctx context.Context) {
 	p.logger.Info("Stopping NATS K/V data injection plugin")
 
 	if err := p.bucketDataManager.Stop(ctx); err != nil {
-		p.logger.Error("Error stopping group data manager: %v", err)
+		p.logger.Error("Error stopping bucket data manager: %v", err)
 	}
 
 	p.logger.Info("NATS plugin stopped")
@@ -362,25 +330,25 @@ func (p *Plugin) Reconfigure(ctx context.Context, config any) {
 
 	// Stop the current manager
 	if err := p.bucketDataManager.Stop(ctx); err != nil {
-		p.logger.Error("Error stopping group data manager during reconfiguration: %v", err)
+		p.logger.Error("Error stopping bucket data manager during reconfiguration: %v", err)
 	}
 
 	// Update configuration
 	p.config = newConfig
 
-	// Create new group data manager with updated config
-	groupDataManager, err := NewBucketDataManager(newConfig, p.logger)
+	// Create new bucket data manager with updated config
+	bucketDataManager, err := NewBucketDataManager(newConfig, p.logger)
 	if err != nil {
-		p.logger.Error("Failed to create new group data manager during reconfiguration: %v", err)
+		p.logger.Error("Failed to create new bucket data manager during reconfiguration: %v", err)
 		return
 	}
 
-	if err := groupDataManager.Start(ctx); err != nil {
-		p.logger.Error("Failed to start new group data manager during reconfiguration: %v", err)
+	if err := bucketDataManager.Start(ctx); err != nil {
+		p.logger.Error("Failed to start new bucket data manager during reconfiguration: %v", err)
 		return
 	}
 
-	p.bucketDataManager = groupDataManager
+	p.bucketDataManager = bucketDataManager
 
 	p.logger.Info("NATS K/V data injection plugin reconfigured successfully")
 }

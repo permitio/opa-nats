@@ -16,7 +16,6 @@ type NATSClient struct {
 	config    *Config
 	conn      *nats.Conn
 	js        nats.JetStreamContext
-	kv        nats.KeyValue            // Default bucket (for backward compatibility)
 	buckets   map[string]nats.KeyValue // Dynamic buckets map
 	logger    logging.Logger
 	mu        sync.RWMutex
@@ -106,18 +105,11 @@ func (nc *NATSClient) connect() error {
 }
 
 // keyToPath converts a NATS K/V key back to a path slice.
-func (nc *NATSClient) keyToPath(key string) ([]string, error) {
+func (nc *NATSClient) keyToPath(key string) []string {
 	if key == "" {
-		return []string{}, nil
+		return []string{}
 	}
-	return strings.Split(key, "."), nil
-}
-
-// isConnected returns the current connection status.
-func (nc *NATSClient) isConnected() bool {
-	nc.mu.RLock()
-	defer nc.mu.RUnlock()
-	return nc.connected
+	return strings.Split(key, ".")
 }
 
 // setConnected sets the connection status.

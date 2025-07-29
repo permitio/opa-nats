@@ -39,7 +39,7 @@ func (dt *DataTransformer) NATSKeyToOPAPath(natsKey string, bucketName string, i
 	// Split the NATS key by dots
 	keyParts := strings.Split(natsKey, ".")
 
-	// Create OPA path: ["data", "groupKey", ...keyParts]
+	// Create OPA path: ["data", "bucketKey", ...keyParts]
 	path := make(storage.Path, 0, len(keyParts)+2)
 	// Add bucket name to path only if this is NOT root bucket data
 	if !isRoot {
@@ -51,7 +51,7 @@ func (dt *DataTransformer) NATSKeyToOPAPath(natsKey string, bucketName string, i
 	return path, nil
 }
 
-// LoadGroupDataBulk loads all keys for a group from NATS and stores them in OPA store
+// LoadBucketDataBulk loads all keys for a bucket from NATS and stores them in OPA store
 func (dt *DataTransformer) LoadBucketDataBulk(ctx context.Context, bucketName string, natsClient *NATSClient, opaStore storage.Store, isRoot bool) (err error) {
 	dt.logger.Debug("Loading bulk data for bucket: %s", bucketName)
 
@@ -62,7 +62,7 @@ func (dt *DataTransformer) LoadBucketDataBulk(ctx context.Context, bucketName st
 		}
 	}()
 
-	// Get the bucket for this group
+	// Get the bucket
 	kv, err := natsClient.getBucket(bucketName)
 	if err != nil {
 		return fmt.Errorf("failed to get bucket %s: %w", bucketName, err)
