@@ -16,8 +16,8 @@ func TestPluginFactory_Validate(t *testing.T) {
 
 	// Test with minimal config
 	minimalConfig := map[string]interface{}{
-		"server_url":   "nats://localhost:4222",
-		"single_group": "test_group",
+		"server_url":  "nats://localhost:4222",
+		"root_bucket": "test_bucket",
 	}
 
 	configBytes, err := json.Marshal(minimalConfig)
@@ -37,7 +37,7 @@ func TestPluginFactory_Validate(t *testing.T) {
 	config, ok := validatedConfig.(*Config)
 	assert.True(t, ok)
 	assert.Equal(t, "nats://localhost:4222", config.ServerURL)
-	assert.Equal(t, "test_group", config.SingleGroup)
+	assert.Equal(t, "test_bucket", config.RootBucket)
 }
 
 func TestPluginFactory_New(t *testing.T) {
@@ -45,7 +45,7 @@ func TestPluginFactory_New(t *testing.T) {
 
 	config := DefaultConfig()
 	config.ServerURL = "nats://localhost:4222"
-	config.SingleGroup = "test_group"
+	config.RootBucket = "test_bucket"
 
 	// Create a minimal manager for testing
 	manager := &plugins.Manager{
@@ -73,45 +73,28 @@ func TestPlugin_ConfigValidation(t *testing.T) {
 		expectError bool
 	}{
 		{
-			name: "valid minimal config with single group",
+			name: "valid minimal config with root bucket",
 			config: map[string]interface{}{
-				"server_url":   "nats://localhost:4222",
-				"single_group": "test_group",
-			},
-			expectError: false,
-		},
-		{
-			name: "valid config with group regex pattern",
-			config: map[string]interface{}{
-				"server_url":          "nats://localhost:4222",
-				"group_regex_pattern": "[a-f0-9-]+",
+				"server_url":  "nats://localhost:4222",
+				"root_bucket": "test_bucket",
 			},
 			expectError: false,
 		},
 		{
 			name: "missing server_url",
 			config: map[string]interface{}{
-				"single_group": "test_group",
+				"root_bucket": "test_bucket",
 			},
 			expectError: true,
 		},
 		{
-			name: "conflicting group config (both single_group and group_regex_pattern)",
+			name: "valid config with max_bucket_watchers",
 			config: map[string]interface{}{
 				"server_url":          "nats://localhost:4222",
-				"single_group":        "test_group",
-				"group_regex_pattern": "[a-f0-9-]+",
+				"root_bucket":         "test_bucket",
+				"max_bucket_watchers": 5,
 			},
-			expectError: true,
-		},
-		{
-			name: "invalid cache_size",
-			config: map[string]interface{}{
-				"server_url":               "nats://localhost:4222",
-				"single_group":             "test_group",
-				"group_watcher_cache_size": -1,
-			},
-			expectError: false, // Negative cache size is not validated in the current implementation
+			expectError: false,
 		},
 	}
 
@@ -137,7 +120,7 @@ func TestPlugin_DataInjectionArchitecture(t *testing.T) {
 	// Create a minimal config for data injection testing
 	config := DefaultConfig()
 	config.ServerURL = "nats://localhost:4222"
-	config.SingleGroup = "test_group"
+	config.RootBucket = "test_bucket"
 
 	// Note: Since we can't test actual NATS connectivity without a NATS server,
 	// this test focuses on the plugin architecture and configuration validation
@@ -172,12 +155,10 @@ func TestDefaultConfig(t *testing.T) {
 	config := DefaultConfig()
 
 	assert.Equal(t, "nats://localhost:4222", config.ServerURL)
-	assert.Equal(t, 10, config.MaxGroupWatchers)
-	assert.Equal(t, 100, config.GroupWatcherCacheSize)
+	assert.Equal(t, 10, config.MaxBucketsWatchers)
 	assert.NotZero(t, config.TTL)
 	assert.NotZero(t, config.RefreshInterval)
-	assert.Equal(t, "", config.GroupRegexPattern)
-	assert.Equal(t, "", config.SingleGroup)
+	assert.Equal(t, "", config.RootBucket)
 }
 
 // Note: Integration tests with actual NATS server would go in a separate file

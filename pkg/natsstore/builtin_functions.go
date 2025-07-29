@@ -8,7 +8,6 @@ import (
 	"github.com/open-policy-agent/opa/v1/storage"
 )
 
-
 // BucketDataManager manages group data loading and injection into OPA store
 type BucketDataManager struct {
 	natsClient      *NATSClient
@@ -102,6 +101,6 @@ func (gdm *BucketDataManager) EnsureBucketLoaded(ctx context.Context, bucketName
 		}
 	}
 	gdm.logger.Info("Bucket %s successfully loaded into OPA store, isRoot: %t", bucketName, isRoot)
-	
+
 	return nil
 }

@@ -24,7 +24,7 @@ type NATSClient struct {
 }
 
 // NewNATSClient creates a new NATS client with the given configuration.
-	func NewNATSClient(config *Config, logger logging.Logger) (*NATSClient, error) {
+func NewNATSClient(config *Config, logger logging.Logger) (*NATSClient, error) {
 	client := &NATSClient{
 		config:  config,
 		logger:  logger,

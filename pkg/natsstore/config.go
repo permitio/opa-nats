@@ -47,23 +47,23 @@ type Config struct {
 	ReconnectWait        Duration `json:"reconnect_wait"`
 
 	// Bucket-based watcher settings (MaxBucketsWatchers is the LRU cache size for bucket watchers)
-	MaxBucketsWatchers       int    `json:"max_bucket_watchers,omitempty"`        // LRU cache size for bucket watchers
+	MaxBucketsWatchers int `json:"max_bucket_watchers,omitempty"` // LRU cache size for bucket watchers
 
 	// root bucket name
-	RootBucket            string `json:"root_bucket,omitempty"`              // Explicit bucket name to always use
+	RootBucket string `json:"root_bucket,omitempty"` // Explicit bucket name to always use
 
 }
 
 // DefaultConfig returns a default configuration.
 func DefaultConfig() *Config {
 	return &Config{
-		ServerURL:             "nats://localhost:4222",
-		TTL:                   Duration(10 * time.Minute),
-		RefreshInterval:       Duration(30 * time.Second),
-		MaxReconnectAttempts:  10,
-		ReconnectWait:         Duration(2 * time.Second),
-		MaxBucketsWatchers:       10,  // Maximum concurrent bucket watchers (cache size)
-		RootBucket:            "",  // Optional single bucket mode
+		ServerURL:            "nats://localhost:4222",
+		TTL:                  Duration(10 * time.Minute),
+		RefreshInterval:      Duration(30 * time.Second),
+		MaxReconnectAttempts: 10,
+		ReconnectWait:        Duration(2 * time.Second),
+		MaxBucketsWatchers:   10, // Maximum concurrent bucket watchers (cache size)
+		RootBucket:           "", // Optional single bucket mode
 	}
 }
 
@@ -71,7 +71,7 @@ func DefaultConfig() *Config {
 func (c *Config) Validate() error {
 	if c.ServerURL == "" {
 		return fmt.Errorf("server_url is required")
-	}		
+	}
 
 	return nil
 }

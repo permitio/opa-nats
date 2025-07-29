@@ -34,7 +34,7 @@ plugins:
     watch_prefix: ""
     max_reconnect_attempts: 10
     reconnect_wait: "2s"
-    
+
     # Authentication (choose one)
     credentials: "/path/to/nats.creds"
     # OR
@@ -42,7 +42,7 @@ plugins:
     # OR
     username: "user"
     password: "pass"
-    
+
     # TLS (optional)
     tls_cert: "/path/to/cert.pem"
     tls_key: "/path/to/key.pem"
@@ -333,12 +333,12 @@ plugins:
 
 ## License
 
-This project is licensed under the Apache License, Version 2.0.  
+This project is licensed under the Apache License, Version 2.0.
 See the [LICENSE](LICENSE) file for details.
 
 ## Contributing
 
-Contributions are welcome! Please open issues or pull requests on the [opa-nats GitHub repository](https://github.com/permitio/opa-nats) for bug reports, feature requests, or improvements related to the `nats-store` library. 
+Contributions are welcome! Please open issues or pull requests on the [opa-nats GitHub repository](https://github.com/permitio/opa-nats) for bug reports, feature requests, or improvements related to the `nats-store` library.
 
 ## Development: pre-commit hooks
 
@@ -363,4 +363,4 @@ This repository uses [pre-commit](https://pre-commit.com/) to enforce Go best pr
    pre-commit run --all-files
    ```
 
-> All CI checks will run these hooks. Please ensure your code passes before submitting a PR. 
+> All CI checks will run these hooks. Please ensure your code passes before submitting a PR.

@@ -76,4 +76,4 @@ jobs:
       - name: Report vulnerabilities
         run: |
           echo "::warning ::Security vulnerabilities were found. Please review the govulncheck output above."
-        if: ${{ failure() }} 
+        if: ${{ failure() }}

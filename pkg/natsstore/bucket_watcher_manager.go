@@ -84,16 +84,16 @@ func (gw *BucketWatcher) Start() error {
 
 func (gw *BucketWatcher) cleanOPAStore() error {
 	txn, err := gw.opaStore.NewTransaction(gw.ctx, storage.TransactionParams{
-			BasePaths: []string{"nats"},
-			Context:   storage.NewContext(),
-			Write:     true,
+		BasePaths: []string{"nats"},
+		Context:   storage.NewContext(),
+		Write:     true,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create transaction: %w", err)
 	}
 	defer func() {
 		if err != nil {
-			gw.opaStore.Abort(gw.ctx,txn)
+			gw.opaStore.Abort(gw.ctx, txn)
 			gw.logger.Error("Aborting clean transaction: %v", err)
 		}
 		if err := gw.opaStore.Commit(gw.ctx, txn); err != nil {
@@ -102,12 +102,12 @@ func (gw *BucketWatcher) cleanOPAStore() error {
 			gw.logger.Debug("Committed clean transaction")
 		}
 	}()
-	
-	err = gw.opaStore.Write(gw.ctx, txn, storage.RemoveOp, storage.Path{"nats","kv",gw.bucketName}, nil)
+
+	err = gw.opaStore.Write(gw.ctx, txn, storage.RemoveOp, storage.Path{"nats", "kv", gw.bucketName}, nil)
 	if err != nil {
 		return fmt.Errorf("failed to write to OPA store: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -195,14 +195,14 @@ func (gw *BucketWatcher) handleKVUpdate(entry nats.KeyValueEntry) {
 
 // BucketWatcherManager manages multiple bucket watchers with LRU eviction.
 type BucketWatcherManager struct {
-	rootWatcher      *BucketWatcher
-	watchers         *lru.Cache[string, *BucketWatcher]
-	natsClient       *NATSClient
-	dataTransformer  *DataTransformer
-	logger           logging.Logger
-	maxWatchers      int
-	mu               sync.RWMutex
-	rootBucket       string
+	rootWatcher     *BucketWatcher
+	watchers        *lru.Cache[string, *BucketWatcher]
+	natsClient      *NATSClient
+	dataTransformer *DataTransformer
+	logger          logging.Logger
+	maxWatchers     int
+	mu              sync.RWMutex
+	rootBucket      string
 }
 
 // NewBucketWatcherManager creates a new bucket watcher manager.
@@ -212,7 +212,7 @@ func NewBucketWatcherManager(natsClient *NATSClient, maxWatchers int, logger log
 	if err != nil {
 		return nil, fmt.Errorf("failed to create data transformer: %w", err)
 	}
-	manager := &BucketWatcherManager{		
+	manager := &BucketWatcherManager{
 		natsClient:      natsClient,
 		dataTransformer: dataTransformer,
 		logger:          logger,
@@ -234,7 +234,7 @@ func (gwm *BucketWatcherManager) HasWatcher(bucketName string) bool {
 	return isWatched
 }
 
-func (gwm *BucketWatcherManager) withCache() error {	
+func (gwm *BucketWatcherManager) withCache() error {
 	// Create LRU cache for watchers with eviction callback
 	cache, err := lru.NewWithEvict[string, *BucketWatcher](gwm.maxWatchers, gwm.onEviction)
 	if err != nil {
@@ -243,7 +243,6 @@ func (gwm *BucketWatcherManager) withCache() error {
 	gwm.watchers = cache
 	return nil
 }
-
 
 func (gwm *BucketWatcherManager) onEviction(key string, value *BucketWatcher) {
 	if err := value.Stop(); err != nil {
@@ -301,7 +300,6 @@ func (gwm *BucketWatcherManager) GetOrCreateWatcher(bucketName string, opaStore 
 
 	return watcher, nil
 }
-
 
 // Stop shuts down all bucket watchers.
 func (gwm *BucketWatcherManager) Stop() error {

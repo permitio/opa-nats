@@ -19,9 +19,9 @@ import (
 )
 
 const (
-	PluginName              = "nats"
-	WatchBucketBuiltinName  = "nats.kv.watch_bucket"
-	GetDataBuiltinName      = "nats.kv.get_data"
+	PluginName             = "nats"
+	WatchBucketBuiltinName = "nats.kv.watch_bucket"
+	GetDataBuiltinName     = "nats.kv.get_data"
 )
 
 func getDataCacheKey(bucketName string) string {
@@ -32,7 +32,7 @@ func getDataCacheKey(bucketName string) string {
 type PluginFactory struct {
 	logger            logging.Logger
 	bucketDataManager *BucketDataManager
-	originalStore    storage.Store
+	originalStore     storage.Store
 }
 
 // NewPluginFactory creates a new NATS K/V store plugin factory.
@@ -42,15 +42,14 @@ func NewPluginFactory() *PluginFactory {
 	return factory
 }
 
-
 func (f *PluginFactory) watchBucketBuiltin(bctx rego.BuiltinContext, inputTerm *ast.Term) (*ast.Term, error) {
 	bucketName := string(inputTerm.Value.(ast.String))
-	
+
 	// Check if bucket is already being watched
 	if f.bucketDataManager.watcherManager.HasWatcher(bucketName) {
 		return ast.BooleanTerm(true), nil
 	}
-	
+
 	// Bucket not watched yet - load data into cache and start watching
 	bucketGjson, err := f.loadBucketAsGJSON(bctx.Context, bucketName)
 	if err != nil {
@@ -59,11 +58,11 @@ func (f *PluginFactory) watchBucketBuiltin(bctx rego.BuiltinContext, inputTerm *
 		}
 		return nil, fmt.Errorf("failed to load bucket data: %w", err)
 	}
-	
+
 	// Store gjson data in ND builtin cache for this query
 	cacheKey := getDataCacheKey(bucketName)
 	bctx.Cache.Put(cacheKey, bucketGjson)
-	
+
 	// Start watching asynchronously (no OPA store writes during query)
 	go func() {
 		if _, err := f.bucketDataManager.watcherManager.GetOrCreateWatcher(bucketName, f.originalStore); err != nil {
@@ -71,14 +70,14 @@ func (f *PluginFactory) watchBucketBuiltin(bctx rego.BuiltinContext, inputTerm *
 			f.logger.Error("Failed to start watcher for bucket %s: %v", bucketName, err)
 		}
 	}()
-	
+
 	return ast.BooleanTerm(false), nil
 }
 
 func (f *PluginFactory) getDataBuiltin(bctx rego.BuiltinContext, bucketTerm *ast.Term, keyTerm *ast.Term) (*ast.Term, error) {
 	bucketName := string(bucketTerm.Value.(ast.String))
 	dotNotationKey := string(keyTerm.Value.(ast.String))
-	
+
 	// Try to get gjson data from cache first
 	cacheKey := getDataCacheKey(bucketName)
 	if cachedValue, ok := bctx.Cache.Get(cacheKey); ok {
@@ -91,24 +90,24 @@ func (f *PluginFactory) getDataBuiltin(bctx rego.BuiltinContext, bucketTerm *ast
 			}
 		}
 	}
-	
+
 	// Cache miss - load directly from NATS with warning
 	f.logger.Warn("Warning: Cache miss for bucket %s, key %s. Loading directly from NATS.\n", bucketName, dotNotationKey)
-	
+
 	bucketGjson, err := f.loadBucketAsGJSON(bctx.Context, bucketName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load bucket data: %w", err)
 	}
-	
+
 	// Cache the gjson data for subsequent calls in this query
 	bctx.Cache.Put(cacheKey, bucketGjson)
-	
+
 	// Get the requested value using gjson
 	result := bucketGjson.Get(dotNotationKey)
 	if result.Exists() {
 		return f.gjsonResultToASTTerm(result), nil
 	}
-	
+
 	// Key not found
 	return ast.NullTerm(), nil
 }
@@ -119,7 +118,7 @@ func (f *PluginFactory) loadBucketAsGJSON(ctx context.Context, bucketName string
 	if err != nil {
 		return nil, fmt.Errorf("failed to get bucket %s: %w", bucketName, err)
 	}
-	
+
 	// List all keys in the bucket
 	keys, err := kv.Keys()
 	if err != nil {
@@ -129,15 +128,15 @@ func (f *PluginFactory) loadBucketAsGJSON(ctx context.Context, bucketName string
 		}
 		return nil, fmt.Errorf("failed to list keys in bucket %s: %w", bucketName, err)
 	}
-	
+
 	// Build JSON using sjson
 	jsonBytes := []byte("{}")
 	for _, key := range keys {
 		entry, err := kv.Get(key)
-		if err != nil {			
+		if err != nil {
 			continue // Skip failed keys
 		}
-		
+
 		jsonBytes, _ = sjson.SetRawBytes(jsonBytes, key, entry.Value())
 	}
 
@@ -211,7 +210,7 @@ func (f *PluginFactory) RegisterBuiltin() {
 		},
 		f.watchBucketBuiltin,
 	)
-	
+
 	// Register nats.kv.get_data builtin
 	rego.RegisterBuiltin2(
 		&rego.Function{
@@ -301,7 +300,6 @@ func (f *PluginFactory) New(manager *plugins.Manager, config any) plugins.Plugin
 		logger.Error("Invalid config type for NATS K/V store plugin")
 		return nil
 	}
-	
 
 	plugin := &Plugin{
 		manager:           manager,
@@ -309,7 +307,7 @@ func (f *PluginFactory) New(manager *plugins.Manager, config any) plugins.Plugin
 		bucketDataManager: f.bucketDataManager,
 		logger:            logger,
 	}
-	
+
 	return plugin
 }
 
@@ -320,7 +318,6 @@ type Plugin struct {
 	bucketDataManager *BucketDataManager
 	logger            logging.Logger
 }
-
 
 // Start initializes and starts the plugin.
 func (p *Plugin) Start(ctx context.Context) error {
@@ -336,7 +333,7 @@ func (p *Plugin) Start(ctx context.Context) error {
 		if err := p.bucketDataManager.EnsureBucketLoaded(ctx, p.config.RootBucket, p.manager.Store, true); err != nil {
 			return err
 		}
-	}	
+	}
 
 	p.logger.Info("NATS plugin started successfully")
 	return nil

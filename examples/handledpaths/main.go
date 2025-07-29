@@ -20,8 +20,8 @@ func main() {
 		TTL:       natsstore.Duration(5 * time.Minute),
 
 		// Group watcher settings - MaxGroupWatchers is the LRU cache size for group watchers
-		MaxBucketsWatchers:      10,
-		RootBucket: "example-bucket",
+		MaxBucketsWatchers: 10,
+		RootBucket:         "example-bucket",
 	}
 
 	// Marshal config to map[string]interface{} for OPA
@@ -37,7 +37,6 @@ func main() {
 	// Register the natsstore plugin with OPA
 	pluginFactory := natsstore.NewPluginFactory()
 	runtime.RegisterPlugin(natsstore.PluginName, pluginFactory)
-
 
 	if err := cmd.RootCommand.Execute(); err != nil {
 		log.Fatalf("Failed to execute OPA runtime: %v", err)
