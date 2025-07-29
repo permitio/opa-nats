@@ -333,7 +333,7 @@ func (p *Plugin) Start(ctx context.Context) error {
 	// If we have a root bucket configured, load it immediately
 	if p.config.RootBucket != "" {
 		p.logger.Info("Loading root bucket: %s", p.config.RootBucket)
-		if err := p.bucketDataManager.EnsureBucketLoaded(ctx, p.config.RootBucket, p.manager.Store); err != nil {
+		if err := p.bucketDataManager.EnsureBucketLoaded(ctx, p.config.RootBucket, p.manager.Store, true); err != nil {
 			return err
 		}
 	}	

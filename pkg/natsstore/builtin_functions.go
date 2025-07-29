@@ -77,7 +77,7 @@ func (gdm *BucketDataManager) Stop(ctx context.Context) error {
 }
 
 // EnsureGroupLoaded ensures a group is watched and all data is loaded into OPA store
-func (gdm *BucketDataManager) EnsureBucketLoaded(ctx context.Context, bucketName string, opaStore storage.Store) error {
+func (gdm *BucketDataManager) EnsureBucketLoaded(ctx context.Context, bucketName string, opaStore storage.Store, isRoot bool) error {
 	gdm.logger.Debug("Ensuring bucket %s is loaded into OPA store", bucketName)
 
 	if gdm.watcherManager.HasWatcher(bucketName) {
@@ -88,15 +88,20 @@ func (gdm *BucketDataManager) EnsureBucketLoaded(ctx context.Context, bucketName
 	}
 
 	// Load bucket data from NATS into OPA store synchronously
-	if err := gdm.dataTransformer.LoadBucketDataBulk(ctx, bucketName, gdm.natsClient, opaStore); err != nil {
+	if err := gdm.dataTransformer.LoadBucketDataBulk(ctx, bucketName, gdm.natsClient, opaStore, isRoot); err != nil {
 		return fmt.Errorf("failed to load bucket data for %s: %w", bucketName, err)
 	}
 
-	// Start watching for future changes (async)
-	if _, err := gdm.watcherManager.GetOrCreateWatcher(bucketName, opaStore); err != nil {
-		return err
+	if isRoot {
+		if _, err := gdm.watcherManager.CreateRootWatcher(opaStore); err != nil {
+			return fmt.Errorf("failed to create root watcher: %w", err)
+		}
+	} else {
+		if _, err := gdm.watcherManager.GetOrCreateWatcher(bucketName, opaStore); err != nil {
+			return err
+		}
 	}
-
-	gdm.logger.Info("Bucket %s successfully loaded into OPA store", bucketName)
+	gdm.logger.Info("Bucket %s successfully loaded into OPA store, isRoot: %t", bucketName, isRoot)
+	
 	return nil
 }

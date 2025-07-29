@@ -14,14 +14,14 @@ import (
 // DataTransformer handles conversion between NATS keys and OPA store paths
 type DataTransformer struct {
 	rootBucket string
-	logger      logging.Logger
+	logger     logging.Logger
 }
 
 // NewDataTransformer creates a new data transformer
-func NewDataTransformer(config *Config,logger logging.Logger) (*DataTransformer, error) {
+func NewDataTransformer(config *Config, logger logging.Logger) (*DataTransformer, error) {
 	dt := &DataTransformer{
 		rootBucket: config.RootBucket,
-		logger:      logger,
+		logger:     logger,
 	}
 
 	return dt, nil
@@ -29,7 +29,9 @@ func NewDataTransformer(config *Config,logger logging.Logger) (*DataTransformer,
 
 // NATSKeyToOPAPath converts a NATS key to an OPA storage path
 // For example: "users.alice.profile" -> ["data", "users", "alice", "profile"]
-func (dt *DataTransformer) NATSKeyToOPAPath(natsKey string, bucketName string) (storage.Path, error) {
+// If isRoot=true, path is /nats/kv/{keyParts...}
+// If isRoot=false, path is /nats/kv/{bucketName}/{keyParts...}
+func (dt *DataTransformer) NATSKeyToOPAPath(natsKey string, bucketName string, isRoot bool) (storage.Path, error) {
 	if natsKey == "" {
 		return nil, fmt.Errorf("empty NATS key")
 	}
@@ -39,13 +41,10 @@ func (dt *DataTransformer) NATSKeyToOPAPath(natsKey string, bucketName string) (
 
 	// Create OPA path: ["data", "groupKey", ...keyParts]
 	path := make(storage.Path, 0, len(keyParts)+2)
-	path = append(path,"nats","kv")
-
-	// Add group key if we're not in single group mode or if it's different from the NATS key
-	if dt.rootBucket == "" {
-		path = append(path, bucketName)
-	} 
-	// if we are in single group mode, the nats keys are passed as is
+	// Add bucket name to path only if this is NOT root bucket data
+	if !isRoot {
+		path = append(path, "nats", "kv", bucketName)
+	}
 
 	path = append(path, keyParts...)
 
@@ -53,9 +52,9 @@ func (dt *DataTransformer) NATSKeyToOPAPath(natsKey string, bucketName string) (
 }
 
 // LoadGroupDataBulk loads all keys for a group from NATS and stores them in OPA store
-func (dt *DataTransformer) LoadBucketDataBulk(ctx context.Context, bucketName string, natsClient *NATSClient, opaStore storage.Store) (err error) {
+func (dt *DataTransformer) LoadBucketDataBulk(ctx context.Context, bucketName string, natsClient *NATSClient, opaStore storage.Store, isRoot bool) (err error) {
 	dt.logger.Debug("Loading bulk data for bucket: %s", bucketName)
-	
+
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("panic in LoadBucketDataBulk: %v", r)
@@ -86,7 +85,7 @@ func (dt *DataTransformer) LoadBucketDataBulk(ctx context.Context, bucketName st
 	basePaths := make([]string, 0)
 	basePathSet := make(map[string]bool)
 	for _, natsKey := range keys {
-		opaPath, err := dt.NATSKeyToOPAPath(natsKey, bucketName)
+		opaPath, err := dt.NATSKeyToOPAPath(natsKey, bucketName, isRoot)
 		if err != nil {
 			dt.logger.Warn("Failed to convert NATS key to OPA path: %v", err)
 			continue
@@ -116,7 +115,7 @@ func (dt *DataTransformer) LoadBucketDataBulk(ctx context.Context, bucketName st
 	}
 	dt.logger.Debug("Transaction created successfully")
 	successfulKeys := 0
-	defer func (ctx context.Context, opaStore storage.Store, txn storage.Transaction) {
+	defer func(ctx context.Context, opaStore storage.Store, txn storage.Transaction) {
 		if err != nil {
 			opaStore.Abort(ctx, txn)
 		} else {
@@ -132,10 +131,10 @@ func (dt *DataTransformer) LoadBucketDataBulk(ctx context.Context, bucketName st
 
 	// Load each key from NATS and store in OPA
 	for _, natsKey := range keys {
-		if err := dt.loadSingleKey(ctx, natsKey, bucketName, kv, opaStore, txn); err != nil {
-			dt.logger.Warn("Failed to load key '%s' for bucket '%s': %v", natsKey, bucketName, err)			
+		if err := dt.loadSingleKey(ctx, natsKey, bucketName, kv, opaStore, txn, isRoot); err != nil {
+			dt.logger.Warn("Failed to load key '%s' for bucket '%s': %v", natsKey, bucketName, err)
 		} else {
-			successfulKeys+=1
+			successfulKeys += 1
 		}
 	}
 
@@ -181,7 +180,7 @@ func (dt *DataTransformer) updateOPAStore(ctx context.Context, opaPath storage.P
 				}
 			}
 		}
-	}	
+	}
 	return nil
 }
 
@@ -196,21 +195,21 @@ func (dt *DataTransformer) ensureParentPathsRecursive(ctx context.Context, fullP
 		// We've reached the root, create the structure from here
 		return dt.createNestedStructure(ctx, fullPath, 0, opaStore, txn)
 	}
-	
+
 	parentPath := fullPath[:currentDepth]
-	
+
 	// Try to read the parent path to see if it exists
 	_, err := opaStore.Read(ctx, txn, parentPath)
 	if err == nil {
 		// Parent exists, we can create the missing child structure from here
 		return dt.createNestedStructure(ctx, fullPath, currentDepth, opaStore, txn)
 	}
-	
+
 	if storage.IsNotFound(err) {
 		// Parent doesn't exist, go deeper
 		return dt.ensureParentPathsRecursive(ctx, fullPath, currentDepth-1, opaStore, txn)
 	}
-	
+
 	// Some other error occurred
 	return fmt.Errorf("failed to read parent path %v: %w", parentPath, err)
 }
@@ -221,17 +220,17 @@ func (dt *DataTransformer) createNestedStructure(ctx context.Context, fullPath s
 		// Nothing to create
 		return nil
 	}
-	
+
 	// Build nested structure from existing depth to target
 	var obj map[string]interface{}
 	var valueToWrite interface{}
 	var pathToCreate storage.Path
-	
+
 	if existingDepth == 0 {
 		// Starting from root, create the entire structure
 		obj = map[string]interface{}{}
 		currentObj := obj
-		
+
 		// Create nested objects for each missing level
 		for i := 0; i < len(fullPath)-1; i++ {
 			key := string(fullPath[i])
@@ -245,7 +244,7 @@ func (dt *DataTransformer) createNestedStructure(ctx context.Context, fullPath s
 				currentObj = nextObj
 			}
 		}
-		
+
 		// Write the first level
 		pathToCreate = fullPath[:1]
 		valueToWrite = obj[string(fullPath[0])]
@@ -253,7 +252,7 @@ func (dt *DataTransformer) createNestedStructure(ctx context.Context, fullPath s
 		// Starting from an existing parent
 		obj = map[string]interface{}{}
 		currentObj := obj
-		
+
 		// Create nested objects for each missing level
 		for i := existingDepth; i < len(fullPath)-1; i++ {
 			key := string(fullPath[i])
@@ -267,24 +266,24 @@ func (dt *DataTransformer) createNestedStructure(ctx context.Context, fullPath s
 				currentObj = nextObj
 			}
 		}
-		
+
 		// Write the nested structure
 		pathToCreate = fullPath[:existingDepth+1]
 		valueToWrite = obj[string(fullPath[existingDepth])]
 	}
-	
+
 	if err := opaStore.Write(ctx, txn, storage.AddOp, pathToCreate, valueToWrite); err != nil {
 		if err.Error() != "storage_invalid_patch_error: path already exists" {
 			return fmt.Errorf("failed to create nested structure at %v: %w", pathToCreate, err)
 		}
 	}
-	
+
 	dt.logger.Debug("Created nested structure from %v", pathToCreate)
 	return nil
 }
 
 // loadSingleKey loads a single key from NATS KV and stores it in OPA store
-func (dt *DataTransformer) loadSingleKey(ctx context.Context, natsKey string, bucketName string, kv nats.KeyValue, opaStore storage.Store, txn storage.Transaction) error {
+func (dt *DataTransformer) loadSingleKey(ctx context.Context, natsKey string, bucketName string, kv nats.KeyValue, opaStore storage.Store, txn storage.Transaction, isRoot bool) error {
 	// Get value from NATS
 	entry, err := kv.Get(natsKey)
 	if err != nil {
@@ -299,7 +298,7 @@ func (dt *DataTransformer) loadSingleKey(ctx context.Context, natsKey string, bu
 	}
 
 	// Convert NATS key to OPA path
-	opaPath, err := dt.NATSKeyToOPAPath(natsKey, bucketName)
+	opaPath, err := dt.NATSKeyToOPAPath(natsKey, bucketName, isRoot)
 	if err != nil {
 		return fmt.Errorf("failed to convert NATS key to OPA path: %w", err)
 	}
@@ -313,9 +312,9 @@ func (dt *DataTransformer) loadSingleKey(ctx context.Context, natsKey string, bu
 }
 
 // InjectDataToOPAStore converts NATS data to OPA store writes (for watch updates)
-func (dt *DataTransformer) InjectDataToOPAStore(ctx context.Context, opaStore storage.Store, bucketName string, natsKey string, value any) error {
+func (dt *DataTransformer) InjectDataToOPAStore(ctx context.Context, opaStore storage.Store, bucketName string, natsKey string, value any, isRoot bool) error {
 	// Convert NATS key to OPA path
-	opaPath, err := dt.NATSKeyToOPAPath(natsKey, bucketName)
+	opaPath, err := dt.NATSKeyToOPAPath(natsKey, bucketName, isRoot)
 	if err != nil {
 		return fmt.Errorf("failed to convert NATS key to OPA path: %w", err)
 	}
@@ -329,7 +328,7 @@ func (dt *DataTransformer) InjectDataToOPAStore(ctx context.Context, opaStore st
 	if err != nil {
 		return fmt.Errorf("failed to create transaction: %w", err)
 	}
-	defer func (ctx context.Context, opaStore storage.Store, txn storage.Transaction) {
+	defer func(ctx context.Context, opaStore storage.Store, txn storage.Transaction) {
 		if err != nil {
 			opaStore.Abort(ctx, txn)
 		} else {
@@ -344,6 +343,6 @@ func (dt *DataTransformer) InjectDataToOPAStore(ctx context.Context, opaStore st
 	if err := dt.updateOPAStore(ctx, opaPath, value, opaStore, txn); err != nil {
 		return fmt.Errorf("failed to update OPA store: %w", err)
 	}
-	
+
 	return nil
 }

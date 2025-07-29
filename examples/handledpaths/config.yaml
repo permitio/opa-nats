@@ -5,7 +5,7 @@ plugins:
     refresh_interval: "30s"
     max_reconnect_attempts: 10
     reconnect_wait: "2s"
-    max_bucket_watchers: 10
+    max_bucket_watchers: 1
     root_bucket: "permit-groups-default"
 
 services:

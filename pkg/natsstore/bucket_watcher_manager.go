@@ -4,10 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
-	"strings"
 	"sync"
-	"time"
 
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/nats-io/nats.go"
@@ -27,11 +24,12 @@ type BucketWatcher struct {
 	cancel          context.CancelFunc
 	mu              sync.RWMutex
 	started         bool
-	lastAccess      time.Time
+	stopFinished    chan struct{}
+	isRoot          bool
 }
 
 // NewBucketWatcher creates a new bucket-specific watcher.
-func NewBucketWatcher(bucketName string, natsClient *NATSClient, logger logging.Logger, dataTransformer *DataTransformer, opaStore storage.Store) (*BucketWatcher, error) {
+func NewBucketWatcher(bucketName string, natsClient *NATSClient, logger logging.Logger, dataTransformer *DataTransformer, opaStore storage.Store, isRoot bool) (*BucketWatcher, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	watcher := &BucketWatcher{
@@ -42,7 +40,8 @@ func NewBucketWatcher(bucketName string, natsClient *NATSClient, logger logging.
 		logger:          logger,
 		ctx:             ctx,
 		cancel:          cancel,
-		lastAccess:      time.Now(),
+		isRoot:          isRoot,
+		stopFinished:    make(chan struct{}),
 	}
 
 	return watcher, nil
@@ -62,7 +61,7 @@ func (gw *BucketWatcher) Start() error {
 	if err != nil {
 		return fmt.Errorf("failed to get bucket %s: %w", gw.bucketName, err)
 	}
-	if err := gw.dataTransformer.LoadBucketDataBulk(gw.ctx, gw.bucketName, gw.natsClient, gw.opaStore); err != nil {
+	if err := gw.dataTransformer.LoadBucketDataBulk(gw.ctx, gw.bucketName, gw.natsClient, gw.opaStore, gw.isRoot); err != nil {
 		return fmt.Errorf("failed to load bucket data for %s: %w", gw.bucketName, err)
 	}
 
@@ -83,6 +82,35 @@ func (gw *BucketWatcher) Start() error {
 	return nil
 }
 
+func (gw *BucketWatcher) cleanOPAStore() error {
+	txn, err := gw.opaStore.NewTransaction(gw.ctx, storage.TransactionParams{
+			BasePaths: []string{"nats"},
+			Context:   storage.NewContext(),
+			Write:     true,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			gw.opaStore.Abort(gw.ctx,txn)
+			gw.logger.Error("Aborting clean transaction: %v", err)
+		}
+		if err := gw.opaStore.Commit(gw.ctx, txn); err != nil {
+			gw.logger.Error("Failed to commit clean transaction: %v", err)
+		} else {
+			gw.logger.Debug("Committed clean transaction")
+		}
+	}()
+	
+	err = gw.opaStore.Write(gw.ctx, txn, storage.RemoveOp, storage.Path{"nats","kv",gw.bucketName}, nil)
+	if err != nil {
+		return fmt.Errorf("failed to write to OPA store: %w", err)
+	}
+	
+	return nil
+}
+
 // Stop shuts down the bucket watcher.
 func (gw *BucketWatcher) Stop() error {
 	gw.mu.Lock()
@@ -94,14 +122,19 @@ func (gw *BucketWatcher) Stop() error {
 
 	gw.cancel()
 
+	// wait for the goroutine to finish
+	<-gw.stopFinished
 	if gw.watcher != nil {
 		if err := gw.watcher.Stop(); err != nil {
 			gw.logger.Error("Failed to stop watcher for bucket %s: %v", gw.bucketName, err)
 		}
 	}
-
 	gw.started = false
 	gw.logger.Debug("Stopped bucket watcher for: %s", gw.bucketName)
+	if err := gw.cleanOPAStore(); err != nil {
+		gw.logger.Warn("Failed to clean OPA store for bucket %s: %v", gw.bucketName, err)
+		// we don't consider this as failing to stop the watcher
+	}
 	return nil
 }
 
@@ -114,6 +147,7 @@ func (gw *BucketWatcher) watchLoop() {
 	for {
 		select {
 		case <-gw.ctx.Done():
+			close(gw.stopFinished)
 			return
 		case entry := <-gw.watcher.Updates():
 			if entry == nil {
@@ -143,7 +177,7 @@ func (gw *BucketWatcher) handleKVUpdate(entry nats.KeyValueEntry) {
 		}
 
 		// Inject into OPA store
-		if err := gw.dataTransformer.InjectDataToOPAStore(gw.ctx, gw.opaStore, gw.bucketName, key, value); err != nil {
+		if err := gw.dataTransformer.InjectDataToOPAStore(gw.ctx, gw.opaStore, gw.bucketName, key, value, gw.isRoot); err != nil {
 			gw.logger.Error("Failed to inject data to OPA store for bucket %s, key %s: %v", gw.bucketName, key, err)
 		} else {
 			gw.logger.Debug("Injected update to OPA store for bucket %s, path: %v", gw.bucketName, path)
@@ -151,7 +185,7 @@ func (gw *BucketWatcher) handleKVUpdate(entry nats.KeyValueEntry) {
 
 	case nats.KeyValueDelete, nats.KeyValuePurge:
 		// Remove from OPA store
-		if err := gw.dataTransformer.InjectDataToOPAStore(gw.ctx, gw.opaStore, gw.bucketName, key, nil); err != nil {
+		if err := gw.dataTransformer.InjectDataToOPAStore(gw.ctx, gw.opaStore, gw.bucketName, key, nil, gw.isRoot); err != nil {
 			gw.logger.Error("Failed to remove data from OPA store for bucket %s, key %s: %v", gw.bucketName, key, err)
 		} else {
 			gw.logger.Debug("Removed from OPA store for bucket %s, path: %v", gw.bucketName, path)
@@ -161,69 +195,35 @@ func (gw *BucketWatcher) handleKVUpdate(entry nats.KeyValueEntry) {
 
 // BucketWatcherManager manages multiple bucket watchers with LRU eviction.
 type BucketWatcherManager struct {
+	rootWatcher      *BucketWatcher
 	watchers         *lru.Cache[string, *BucketWatcher]
 	natsClient       *NATSClient
 	dataTransformer  *DataTransformer
 	logger           logging.Logger
 	maxWatchers      int
-	watcherCacheSize int
-	watcherTTL       time.Duration
 	mu               sync.RWMutex
-	bucketRegex      []*regexp.Regexp
-	singleBucketMode bool
 	rootBucket       string
 }
 
 // NewBucketWatcherManager creates a new bucket watcher manager.
 func NewBucketWatcherManager(natsClient *NATSClient, maxWatchers int, logger logging.Logger, config *Config) (*BucketWatcherManager, error) {
-	// Create LRU cache for watchers with eviction callback
-	cache, err := lru.NewWithEvict[string, *BucketWatcher](maxWatchers, func(key string, value *BucketWatcher) {
-		// Stop evicted watcher
-		if err := value.Stop(); err != nil {
-			logger.Error("Failed to stop evicted bucket watcher for %s: %v", key, err)
-		}
-		logger.Debug("Evicted bucket watcher for: %s", key)
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create LRU cache: %w", err)
-	}
-
 	// Create data transformer
 	dataTransformer, err := NewDataTransformer(config, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create data transformer: %w", err)
 	}
-
-	return &BucketWatcherManager{
-		watchers:        cache,
+	manager := &BucketWatcherManager{		
 		natsClient:      natsClient,
 		dataTransformer: dataTransformer,
 		logger:          logger,
 		maxWatchers:     maxWatchers,
 		rootBucket:      config.RootBucket,
-	}, nil
-}
-
-// ExtractGroup extracts the bucket from a path using the configured pattern or single bucket mode.
-func (gwm *BucketWatcherManager) ExtractBucket(path []string) (string, bool) {
-	if gwm.singleBucketMode {
-		// Single bucket mode - always use the configured bucket
-		return gwm.rootBucket, true
+	}
+	if err := manager.withCache(); err != nil {
+		return nil, fmt.Errorf("failed to create watcher cache: %w", err)
 	}
 
-	// Pattern-based mode
-	if len(gwm.bucketRegex) == 0 || gwm.bucketRegex[0] == nil {
-		return "", false
-	}
-
-	pathStr := strings.Join(path, "/")
-	matches := gwm.bucketRegex[0].FindStringSubmatch(pathStr)
-	if len(matches) > 1 {
-		// Return the first capture bucket which should be the bucket identifier
-		return matches[1], true
-	}
-
-	return "", false
+	return manager, nil
 }
 
 func (gwm *BucketWatcherManager) HasWatcher(bucketName string) bool {
@@ -232,6 +232,36 @@ func (gwm *BucketWatcherManager) HasWatcher(bucketName string) bool {
 	_, isWatched := gwm.watchers.Get(bucketName)
 
 	return isWatched
+}
+
+func (gwm *BucketWatcherManager) withCache() error {	
+	// Create LRU cache for watchers with eviction callback
+	cache, err := lru.NewWithEvict[string, *BucketWatcher](gwm.maxWatchers, gwm.onEviction)
+	if err != nil {
+		return fmt.Errorf("failed to create LRU cache: %w", err)
+	}
+	gwm.watchers = cache
+	return nil
+}
+
+
+func (gwm *BucketWatcherManager) onEviction(key string, value *BucketWatcher) {
+	if err := value.Stop(); err != nil {
+		gwm.logger.Error("Failed to stop evicted bucket watcher for %s: %v", key, err)
+	}
+	gwm.logger.Debug("Evicted bucket watcher for: %s", key)
+}
+
+func (gwm *BucketWatcherManager) CreateRootWatcher(opaStore storage.Store) (*BucketWatcher, error) {
+	watcher, err := NewBucketWatcher(gwm.rootBucket, gwm.natsClient, gwm.logger, gwm.dataTransformer, opaStore, true)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create root bucket watcher: %w", err)
+	}
+	gwm.rootWatcher = watcher
+	if err := watcher.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start bucket watcher for %s: %w", gwm.rootBucket, err)
+	}
+	return watcher, nil
 }
 
 // GetOrCreateWatcher gets an existing watcher for a bucket or creates a new one.
@@ -246,7 +276,7 @@ func (gwm *BucketWatcherManager) GetOrCreateWatcher(bucketName string, opaStore 
 	}
 
 	// Create new watcher
-	watcher, err := NewBucketWatcher(bucketName, gwm.natsClient, gwm.logger, gwm.dataTransformer, opaStore)
+	watcher, err := NewBucketWatcher(bucketName, gwm.natsClient, gwm.logger, gwm.dataTransformer, opaStore, false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create bucket watcher for %s: %w", bucketName, err)
 	}
@@ -268,49 +298,10 @@ func (gwm *BucketWatcherManager) GetOrCreateWatcher(bucketName string, opaStore 
 	} else {
 		gwm.logger.Debug("Added new bucket watcher for: %s", bucketName)
 	}
-	
 
 	return watcher, nil
 }
 
-// Get retrieves a value using bucket-based caching.
-func (gwm *BucketWatcherManager) Get(ctx context.Context, path []string) (interface{}, bool, error) {
-	// Extract bucket from path
-	_, hasBucket := gwm.ExtractBucket(path)
-	if !hasBucket {
-		return nil, false, fmt.Errorf("no bucket found in path: %v", path)
-	}
-
-	// Note: This Get method is deprecated in the new architecture
-	// Group data should be loaded via EnsureGroupLoaded instead
-	return nil, false, fmt.Errorf("Group.Get method is deprecated - use EnsureGroupLoaded to load data into OPA store")
-}
-
-// Set stores a value using bucket-based caching.
-func (gwm *BucketWatcherManager) Set(ctx context.Context, path []string, value interface{}) error {
-	// Extract bucket from path
-	_, hasBucket := gwm.ExtractBucket(path)
-	if !hasBucket {
-		return fmt.Errorf("no bucket found in path: %v", path)
-	}
-
-	// Note: This Set method is deprecated in the new architecture
-	// Data should be written directly to NATS, which will trigger watchers to update OPA store
-	return fmt.Errorf("Group.Set method is deprecated - write to NATS directly")
-}
-
-// Delete removes a value using bucket-based caching.
-func (gwm *BucketWatcherManager) Delete(ctx context.Context, path []string) error {
-	// Extract bucket from path
-	_, hasBucket := gwm.ExtractBucket(path)
-	if !hasBucket {
-		return fmt.Errorf("no bucket found in path: %v", path)
-	}
-
-	// Note: This Delete method is deprecated in the new architecture
-	// Data should be deleted directly from NATS, which will trigger watchers to update OPA store
-	return fmt.Errorf("Group.Delete method is deprecated - delete from NATS directly")
-}
 
 // Stop shuts down all bucket watchers.
 func (gwm *BucketWatcherManager) Stop() error {
