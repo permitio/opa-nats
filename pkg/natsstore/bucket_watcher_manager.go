@@ -162,11 +162,7 @@ func (gw *BucketWatcher) watchLoop() {
 // handleKVUpdate processes a K/V update for this bucket.
 func (gw *BucketWatcher) handleKVUpdate(entry nats.KeyValueEntry) {
 	key := entry.Key()
-	path, err := gw.natsClient.keyToPath(key)
-	if err != nil {
-		gw.logger.Error("Failed to parse key %s for bucket %s: %v", key, gw.bucketName, err)
-		return
-	}
+	path := gw.natsClient.keyToPath(key)
 
 	switch entry.Operation() {
 	case nats.KeyValuePut:
