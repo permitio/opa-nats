@@ -270,6 +270,9 @@ func (f *PluginFactory) applyDefaults(config *Config) {
 // New creates a new plugin instance.
 func (f *PluginFactory) New(manager *plugins.Manager, config any) plugins.Plugin {
 	logger := manager.Logger()
+	if logger == nil {
+		logger = logging.New() // Create a default logger for testing scenarios
+	}
 	pluginConfig, ok := config.(*Config)
 	if !ok {
 		logger.Error("Invalid config type for NATS K/V store plugin")
