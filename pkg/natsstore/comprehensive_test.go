@@ -272,7 +272,8 @@ func TestMockStore_Comprehensive(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Test register/unregister operations (simplified to just test they don't panic)
-	store.Register(ctx, txn, storage.TriggerConfig{})
+	_, err = store.Register(ctx, txn, storage.TriggerConfig{})
+	assert.NoError(t, err)
 	// store.Unregister doesn't exist in our mock or we need a proper handle
 
 	// Test Close
