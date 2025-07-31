@@ -48,7 +48,7 @@ func NewBucketDataManager(config *Config, logger logging.Logger) (*BucketDataMan
 }
 
 // Start initializes the bucket data manager
-func (gdm *BucketDataManager) Start(ctx context.Context) error {
+func (gdm *BucketDataManager) Start(_ context.Context) error {
 	if gdm.started {
 		return nil
 	}
@@ -60,7 +60,7 @@ func (gdm *BucketDataManager) Start(ctx context.Context) error {
 }
 
 // Stop shuts down the bucket data manager
-func (gdm *BucketDataManager) Stop(ctx context.Context) error {
+func (gdm *BucketDataManager) Stop(_ context.Context) error {
 	if !gdm.started {
 		return nil
 	}

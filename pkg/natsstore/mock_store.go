@@ -22,12 +22,12 @@ func NewMockStore() *MockStore {
 }
 
 // NewTransaction creates a new transaction
-func (m *MockStore) NewTransaction(ctx context.Context, params ...storage.TransactionParams) (storage.Transaction, error) {
+func (m *MockStore) NewTransaction(_ context.Context, _ ...storage.TransactionParams) (storage.Transaction, error) {
 	return &MockTransaction{store: m}, nil
 }
 
 // Read reads data from the store
-func (m *MockStore) Read(ctx context.Context, txn storage.Transaction, path storage.Path) (interface{}, error) {
+func (m *MockStore) Read(_ context.Context, _ storage.Transaction, path storage.Path) (interface{}, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -43,7 +43,7 @@ func (m *MockStore) Read(ctx context.Context, txn storage.Transaction, path stor
 }
 
 // Write writes data to the store
-func (m *MockStore) Write(ctx context.Context, txn storage.Transaction, op storage.PatchOp, path storage.Path, value interface{}) error {
+func (m *MockStore) Write(_ context.Context, _ storage.Transaction, op storage.PatchOp, path storage.Path, value interface{}) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -62,12 +62,12 @@ func (m *MockStore) Write(ctx context.Context, txn storage.Transaction, op stora
 }
 
 // ListPolicies lists all policies (returns empty for mock)
-func (m *MockStore) ListPolicies(ctx context.Context, txn storage.Transaction) ([]string, error) {
+func (m *MockStore) ListPolicies(_ context.Context, _ storage.Transaction) ([]string, error) {
 	return []string{}, nil
 }
 
 // GetPolicy gets a policy by ID (returns empty for mock)
-func (m *MockStore) GetPolicy(ctx context.Context, txn storage.Transaction, id string) ([]byte, error) {
+func (m *MockStore) GetPolicy(_ context.Context, _ storage.Transaction, id string) ([]byte, error) {
 	return nil, &storage.Error{
 		Code:    storage.NotFoundErr,
 		Message: fmt.Sprintf("policy %s not found", id),
@@ -75,40 +75,40 @@ func (m *MockStore) GetPolicy(ctx context.Context, txn storage.Transaction, id s
 }
 
 // UpsertPolicy inserts or updates a policy (no-op for mock)
-func (m *MockStore) UpsertPolicy(ctx context.Context, txn storage.Transaction, id string, policy []byte) error {
+func (m *MockStore) UpsertPolicy(_ context.Context, _ storage.Transaction, _ string, _ []byte) error {
 	return nil
 }
 
 // DeletePolicy deletes a policy (no-op for mock)
-func (m *MockStore) DeletePolicy(ctx context.Context, txn storage.Transaction, id string) error {
+func (m *MockStore) DeletePolicy(_ context.Context, _ storage.Transaction, _ string) error {
 	return nil
 }
 
 // Register registers a trigger (no-op for mock)
-func (m *MockStore) Register(ctx context.Context, txn storage.Transaction, config storage.TriggerConfig) (storage.TriggerHandle, error) {
+func (m *MockStore) Register(_ context.Context, _ storage.Transaction, _ storage.TriggerConfig) (storage.TriggerHandle, error) {
 	return nil, nil
 }
 
 // Unregister unregisters a trigger (no-op for mock)
-func (m *MockStore) Unregister(ctx context.Context, txn storage.Transaction, handle storage.TriggerHandle) {
+func (m *MockStore) Unregister(_ context.Context, _ storage.Transaction, _ storage.TriggerHandle) {
 }
 
 // Commit commits a transaction (no-op for mock)
-func (m *MockStore) Commit(ctx context.Context, txn storage.Transaction) error {
+func (m *MockStore) Commit(_ context.Context, _ storage.Transaction) error {
 	return nil
 }
 
 // Abort aborts a transaction (no-op for mock)
-func (m *MockStore) Abort(ctx context.Context, txn storage.Transaction) {
+func (m *MockStore) Abort(_ context.Context, _ storage.Transaction) {
 }
 
 // Close closes the store (no-op for mock)
-func (m *MockStore) Close(ctx context.Context, txn storage.Transaction) error {
+func (m *MockStore) Close(_ context.Context, _ storage.Transaction) error {
 	return nil
 }
 
 // Truncate truncates the store (no-op for mock)
-func (m *MockStore) Truncate(ctx context.Context, txn storage.Transaction, params storage.TransactionParams, it storage.Iterator) error {
+func (m *MockStore) Truncate(_ context.Context, _ storage.Transaction, _ storage.TransactionParams, _ storage.Iterator) error {
 	return nil
 }
 

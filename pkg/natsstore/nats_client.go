@@ -40,15 +40,15 @@ func NewNATSClient(config *Config, logger logging.Logger) (*NATSClient, error) {
 // connect establishes connection to NATS and sets up K/V store.
 func (nc *NATSClient) connect() error {
 	opts := []nats.Option{
-		nats.DisconnectErrHandler(func(conn *nats.Conn, err error) {
+		nats.DisconnectErrHandler(func(_ *nats.Conn, err error) {
 			nc.logger.Warn("NATS disconnected: %v", err)
 			nc.setConnected(false)
 		}),
-		nats.ReconnectHandler(func(conn *nats.Conn) {
+		nats.ReconnectHandler(func(_ *nats.Conn) {
 			nc.logger.Info("NATS reconnected")
 			nc.setConnected(true)
 		}),
-		nats.ClosedHandler(func(conn *nats.Conn) {
+		nats.ClosedHandler(func(_ *nats.Conn) {
 			nc.logger.Info("NATS connection closed")
 			nc.setConnected(false)
 		}),

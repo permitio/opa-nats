@@ -33,7 +33,7 @@ func NewMockNATSClient(logger logging.Logger) *MockNATSClient {
 }
 
 // Start starts the mock NATS client
-func (m *MockNATSClient) Start(ctx context.Context) error {
+func (m *MockNATSClient) Start(_ context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -46,7 +46,7 @@ func (m *MockNATSClient) Start(ctx context.Context) error {
 }
 
 // Stop stops the mock NATS client
-func (m *MockNATSClient) Stop(ctx context.Context) error {
+func (m *MockNATSClient) Stop(_ context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -177,6 +177,7 @@ func TestNATSClientInterface(t *testing.T) {
 		Delete([]string) error
 		IsStarted() bool
 	} = NewMockNATSClient(logger)
+	t.Log("MockNATSClient Implements the interface")
 }
 
 func TestMockNATSClient_StartStop(t *testing.T) {
@@ -527,11 +528,11 @@ func BenchmarkMockNATSClient_Get(b *testing.B) {
 // MockLogger implements the logging.Logger interface for testing
 type MockLogger struct{}
 
-func (m *MockLogger) Debug(msg string, args ...any)                   {}
-func (m *MockLogger) Info(msg string, args ...any)                    {}
-func (m *MockLogger) Warn(msg string, args ...any)                    {}
-func (m *MockLogger) Error(msg string, args ...any)                   {}
-func (m *MockLogger) WithFields(fields map[string]any) logging.Logger { return m }
-func (m *MockLogger) GetLevel() logging.Level                         { return logging.Debug }
-func (m *MockLogger) SetLevel(level logging.Level)                    {}
-func (m *MockLogger) GetFields() map[string]any                       { return nil }
+func (m *MockLogger) Debug(_ string, _ ...any)                   {}
+func (m *MockLogger) Info(_ string, _ ...any)                    {}
+func (m *MockLogger) Warn(_ string, _ ...any)                    {}
+func (m *MockLogger) Error(_ string, _ ...any)                   {}
+func (m *MockLogger) WithFields(_ map[string]any) logging.Logger { return m }
+func (m *MockLogger) GetLevel() logging.Level                    { return logging.Debug }
+func (m *MockLogger) SetLevel(_ logging.Level)                   {}
+func (m *MockLogger) GetFields() map[string]any                  { return nil }

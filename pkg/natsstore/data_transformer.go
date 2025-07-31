@@ -134,7 +134,7 @@ func (dt *DataTransformer) LoadBucketDataBulk(ctx context.Context, bucketName st
 		if err := dt.loadSingleKey(ctx, natsKey, bucketName, kv, opaStore, txn, isRoot); err != nil {
 			dt.logger.Warn("Failed to load key '%s' for bucket '%s': %v", natsKey, bucketName, err)
 		} else {
-			successfulKeys += 1
+			successfulKeys++
 		}
 	}
 

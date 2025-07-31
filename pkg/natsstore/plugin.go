@@ -107,9 +107,8 @@ func (f *PluginFactory) getDataBuiltin(bctx rego.BuiltinContext, bucketTerm *ast
 			result := bucketGjson.Get(dotNotationKey)
 			if result.Exists() {
 				return f.gjsonResultToASTTerm(result), nil
-			} else {
-				return ast.NullTerm(), nil
 			}
+			return ast.NullTerm(), nil
 		}
 	}
 
