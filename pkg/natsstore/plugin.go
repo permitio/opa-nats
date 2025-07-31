@@ -30,9 +30,10 @@ func getDataCacheKey(bucketName string) string {
 
 // PluginFactory creates and manages NATS K/V store plugin instances.
 type PluginFactory struct {
-	logger            logging.Logger
-	bucketDataManager *BucketDataManager
-	originalStore     storage.Store
+	logger        logging.Logger
+	originalStore storage.Store
+	// Keep a reference to the current plugin's bucket data manager for builtin functions
+	currentPlugin *Plugin
 }
 
 // NewPluginFactory creates a new NATS K/V store plugin factory.
@@ -45,8 +46,13 @@ func NewPluginFactory() *PluginFactory {
 func (f *PluginFactory) watchBucketBuiltin(bctx rego.BuiltinContext, inputTerm *ast.Term) (*ast.Term, error) {
 	bucketName := string(inputTerm.Value.(ast.String))
 
+	// If no bucket data manager is available (e.g., during tests), return false
+	if f == nil || f.getBucketDataManager() == nil {
+		return ast.BooleanTerm(false), nil
+	}
+
 	// Check if bucket is already being watched
-	if f.bucketDataManager.watcherManager.HasWatcher(bucketName) {
+	if f.getBucketDataManager().watcherManager.HasWatcher(bucketName) {
 		return ast.BooleanTerm(true), nil
 	}
 
@@ -65,9 +71,12 @@ func (f *PluginFactory) watchBucketBuiltin(bctx rego.BuiltinContext, inputTerm *
 
 	// Start watching asynchronously (no OPA store writes during query)
 	go func() {
-		if _, err := f.bucketDataManager.watcherManager.GetOrCreateWatcher(bucketName, f.originalStore); err != nil {
-			// Log error but don't fail the query
-			f.logger.Error("Failed to start watcher for bucket %s: %v", bucketName, err)
+		bdm := f.getBucketDataManager()
+		if bdm != nil {
+			if _, err := bdm.watcherManager.GetOrCreateWatcher(bucketName, f.originalStore); err != nil {
+				// Log error but don't fail the query
+				f.logger.Error("Failed to start watcher for bucket %s: %v", bucketName, err)
+			}
 		}
 	}()
 
@@ -113,8 +122,13 @@ func (f *PluginFactory) getDataBuiltin(bctx rego.BuiltinContext, bucketTerm *ast
 }
 
 func (f *PluginFactory) loadBucketAsGJSON(bucketName string) (*gjson.Result, error) {
+	bdm := f.getBucketDataManager()
+	if bdm == nil {
+		return nil, fmt.Errorf("bucket data manager not available")
+	}
+
 	// Get the bucket
-	kv, err := f.bucketDataManager.natsClient.getBucket(bucketName)
+	kv, err := bdm.natsClient.getBucket(bucketName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get bucket %s: %w", bucketName, err)
 	}
@@ -231,13 +245,6 @@ func (f *PluginFactory) Validate(manager *plugins.Manager, config []byte) (any, 
 	// Store reference to original store
 	f.originalStore = manager.Store
 
-	// Create the bucket data manager (new architecture)
-	bucketDataManager, err := NewBucketDataManager(pluginConfig, logger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create bucket data manager: %w", err)
-	}
-
-	f.bucketDataManager = bucketDataManager
 	return pluginConfig, nil
 }
 
@@ -269,14 +276,33 @@ func (f *PluginFactory) New(manager *plugins.Manager, config any) plugins.Plugin
 		return nil
 	}
 
+	// Create the bucket data manager during plugin creation
+	bucketDataManager, err := NewBucketDataManager(pluginConfig, logger)
+	if err != nil {
+		logger.Error("Failed to create bucket data manager: %v", err)
+		return nil
+	}
+
 	plugin := &Plugin{
 		manager:           manager,
 		config:            pluginConfig,
-		bucketDataManager: f.bucketDataManager,
+		bucketDataManager: bucketDataManager,
 		logger:            logger,
+		factory:           f,
 	}
 
+	// Set the current plugin reference for builtin functions
+	f.currentPlugin = plugin
+
 	return plugin
+}
+
+// getBucketDataManager returns the current plugin's bucket data manager for builtin functions
+func (f *PluginFactory) getBucketDataManager() *BucketDataManager {
+	if f.currentPlugin != nil {
+		return f.currentPlugin.bucketDataManager
+	}
+	return nil
 }
 
 // Plugin represents the NATS K/V cache plugin instance.
@@ -285,6 +311,7 @@ type Plugin struct {
 	config            *Config
 	bucketDataManager *BucketDataManager
 	logger            logging.Logger
+	factory           *PluginFactory
 }
 
 // Start initializes and starts the plugin.
