@@ -8,11 +8,46 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    services:
+      nats:
+        image: nats:2.10.22-alpine
+        ports:
+          - 4222:4222
+          - 8222:8222
+        options: >-
+          --name nats-ci-lint-${{ github.run_id }}
+          --health-cmd "wget --no-verbose --tries=1 --spider http://localhost:8222/healthz"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v4
         with:
           go-version: '1.22'
+      - name: Setup NATS Jetstream for Lint
+        run: |
+          # Setup NATS with JetStream for linting
+          docker cp ${{ github.workspace }}/.github/workflows/utils/nats-jetstream.conf nats-ci-lint-${{ github.run_id }}:/tmp/nats-jetstream.conf
+          docker exec nats-ci-lint-${{ github.run_id }} sh -c 'cat /tmp/nats-jetstream.conf > /etc/nats/nats-server.conf'
+          docker restart nats-ci-lint-${{ github.run_id }}
+
+          # Wait for NATS to be ready
+          timeout=30
+          start_time=$(date +%s)
+          while true; do
+            if curl --fail --silent http://localhost:8222/healthz; then
+              echo "NATS is ready for linting!"
+              break
+            fi
+            current_time=$(date +%s)
+            elapsed=$((current_time - start_time))
+            if [ $elapsed -ge $timeout ]; then
+              echo "Timeout waiting for NATS"
+              exit 1
+            fi
+            sleep 1
+          done
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v4
         with:

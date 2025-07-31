@@ -44,7 +44,11 @@ func NewPluginFactory() *PluginFactory {
 }
 
 func (f *PluginFactory) watchBucketBuiltin(bctx rego.BuiltinContext, inputTerm *ast.Term) (*ast.Term, error) {
-	bucketName := string(inputTerm.Value.(ast.String))
+	bucketNameValue, ok := inputTerm.Value.(ast.String)
+	if !ok {
+		return nil, fmt.Errorf("expected string bucket name, got %T", inputTerm.Value)
+	}
+	bucketName := string(bucketNameValue)
 
 	// If no bucket data manager is available (e.g., during tests), return false
 	if f == nil || f.getBucketDataManager() == nil {
@@ -84,8 +88,17 @@ func (f *PluginFactory) watchBucketBuiltin(bctx rego.BuiltinContext, inputTerm *
 }
 
 func (f *PluginFactory) getDataBuiltin(bctx rego.BuiltinContext, bucketTerm *ast.Term, keyTerm *ast.Term) (*ast.Term, error) {
-	bucketName := string(bucketTerm.Value.(ast.String))
-	dotNotationKey := string(keyTerm.Value.(ast.String))
+	bucketNameValue, ok := bucketTerm.Value.(ast.String)
+	if !ok {
+		return nil, fmt.Errorf("expected string bucket name, got %T", bucketTerm.Value)
+	}
+	bucketName := string(bucketNameValue)
+
+	keyValue, ok := keyTerm.Value.(ast.String)
+	if !ok {
+		return nil, fmt.Errorf("expected string key, got %T", keyTerm.Value)
+	}
+	dotNotationKey := string(keyValue)
 
 	// Try to get gjson data from cache first
 	cacheKey := getDataCacheKey(bucketName)
