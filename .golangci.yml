@@ -1,37 +1,30 @@
+version: "2"
+
 run:
   timeout: 10m
 
-linters-settings:
-  errcheck:
-    check-type-assertions: true
-  gofmt:
-    simplify: true
-  goimports:
-    local-prefixes: github.com/permitio/opa-nats
-  revive:
-    min-confidence: 0.8
-  govet:
-    disable:
-      - fieldalignment  # not critical for functionality
-      - shadow          # not critical for functionality
-
 linters:
+  default: none
   enable:
     - errcheck
-    - gofmt
-    - goimports
-    - revive
     - govet
     - ineffassign
     - misspell
-  disable:
-    - unused          # might analyze unused code that could trigger connections
-
-issues:
-  exclude-rules:
-    # Exclude some lints from testing files
-    - path: _test\.go
-      linters:
-        - errcheck
-        - dupl
-        - gosec
+    - revive
+    - staticcheck
+  exclusions:
+    rules:
+      - path: '_test\.go'
+        linters:
+          - errcheck
+          - dupl
+          - gosec
+  settings:
+    errcheck:
+      check-type-assertions: true
+    revive:
+      confidence: 0.9  # Increased from 0.8 for better precision
+    govet:
+      disable:
+        - fieldalignment  # not critical for functionality
+        - shadow          # not critical for functionality
