@@ -1,0 +1,213 @@
+name: PR Checks
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    services:
+      nats:
+        image: nats:2.10.22-alpine
+        ports:
+          - 4222:4222
+          - 8222:8222
+        options: >-
+          --name nats-ci-lint-${{ github.run_id }}
+          --health-cmd "wget --no-verbose --tries=1 --spider http://localhost:8222/healthz"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v4
+        with:
+          go-version: '1.22'
+      - name: Setup NATS Jetstream for Lint
+        run: |
+          # Setup NATS with JetStream for linting
+          docker cp ${{ github.workspace }}/.github/workflows/utils/nats-jetstream.conf nats-ci-lint-${{ github.run_id }}:/tmp/nats-jetstream.conf
+          docker exec nats-ci-lint-${{ github.run_id }} sh -c 'cat /tmp/nats-jetstream.conf > /etc/nats/nats-server.conf'
+          docker restart nats-ci-lint-${{ github.run_id }}
+
+          # Wait for NATS to be ready
+          timeout=30
+          start_time=$(date +%s)
+          while true; do
+            if curl --fail --silent http://localhost:8222/healthz; then
+              echo "NATS is ready for linting!"
+              break
+            fi
+            current_time=$(date +%s)
+            elapsed=$((current_time - start_time))
+            if [ $elapsed -ge $timeout ]; then
+              echo "Timeout waiting for NATS"
+              exit 1
+            fi
+            sleep 1
+          done
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.3.1
+          args: --timeout=10m
+      - uses: pre-commit/action@v3.0.1
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    services:
+      nats:
+        image: nats:2.10.22-alpine
+        ports:
+          - 4222:4222
+          - 8222:8222
+        options: >-
+          --name nats-ci-${{ github.run_id }}
+          --health-cmd "wget --no-verbose --tries=1 --spider http://localhost:8222/healthz"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        # we can't have health check becasue at the moment the nats server
+        # is not configured with monitoring.
+        # this is due to nats not having environment variables configuration available,
+        # and githuhb actions not allowing to edit the CMD of the container.
+        # see https://github.com/nats-io/nats-docker/issues/110
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+      - name: Setup NATS Jetstream
+        run: |
+          # Print current entrypoint command of the container
+          echo "Current container entrypoint command:"
+          docker inspect nats-ci-${{ github.run_id }} --format='{{.Config.Entrypoint}} {{.Config.Cmd}}' || echo "Failed to get entrypoint info"
+
+          # Find and print the full path of the entrypoint file
+          echo "Discovering entrypoint file path:"
+          docker exec nats-ci-${{ github.run_id }} find / -name "docker-entrypoint.sh" 2>/dev/null || echo "docker-entrypoint.sh not found"
+          docker exec nats-ci-${{ github.run_id }} which docker-entrypoint.sh 2>/dev/null || echo "docker-entrypoint.sh not in PATH"
+
+          # Check what's in common entrypoint locations
+          echo "Checking common entrypoint locations:"
+          docker exec nats-ci-${{ github.run_id }} ls -la /usr/local/bin/ | grep -E "(entrypoint|docker)" || echo "No entrypoint files in /usr/local/bin/"
+          docker exec nats-ci-${{ github.run_id }} ls -la /docker-entrypoint.sh 2>/dev/null || echo "No /docker-entrypoint.sh"
+          docker exec nats-ci-${{ github.run_id }} ls -la /entrypoint.sh 2>/dev/null || echo "No /entrypoint.sh"
+
+          # Show current NATS configuration
+          echo "Current NATS configuration:"
+          docker exec nats-ci-${{ github.run_id }} cat /etc/nats/nats-server.conf || echo "No config file found"
+
+          # Mount the JetStream configuration from utils directory
+          echo "Mounting NATS JetStream configuration"
+          docker cp ${{ github.workspace }}/.github/workflows/utils/nats-jetstream.conf nats-ci-${{ github.run_id }}:/tmp/nats-jetstream.conf
+
+          # Replace the content of the existing config file with our JetStream config
+          echo "Replacing NATS configuration content with JetStream config"
+          docker exec nats-ci-${{ github.run_id }} sh -c 'cat /tmp/nats-jetstream.conf > /etc/nats/nats-server.conf'
+
+          # Show updated configuration
+          echo "Updated NATS configuration:"
+          docker exec nats-ci-${{ github.run_id }} cat /etc/nats/nats-server.conf
+
+          # Restart the container to pick up the new configuration
+          echo "Restarting NATS container with JetStream configuration..."
+          docker restart nats-ci-${{ github.run_id }}
+
+          # Print initial NATS logs for debugging
+          echo "Initial NATS container logs after restart:"
+          docker logs nats-ci-${{ github.run_id }}
+          echo "Container status:"
+          docker ps -a | grep nats-ci-${{ github.run_id }}
+
+          # ensure the nats server is ready by running curl to the health endpoint
+          # in while loop until success or timeout of 10 seconds of failures
+          timeout=10
+          start_time=$(date +%s)
+          while true; do
+            if curl --fail --silent --show-error http://localhost:8222/healthz?js-enabled-only=true; then
+              echo "NATS Jetstream is ready!"
+              echo "Verifying JetStream configuration:"
+              jsz_response=$(curl -s http://localhost:8222/jsz)
+              echo "$jsz_response" | jq '.' || echo "JetStream info not available"
+
+              # Check if JetStream is disabled
+              if echo "$jsz_response" | jq -e '.disabled == true' > /dev/null 2>&1; then
+                echo "ERROR: JetStream is disabled in the server configuration!"
+                echo "JetStream response: $jsz_response"
+                exit 1
+              elif echo "$jsz_response" | jq -e '.disabled == false' > /dev/null 2>&1; then
+                echo "SUCCESS: JetStream is enabled and configured properly"
+              else
+                echo "WARNING: Could not determine JetStream disabled status from response"
+                echo "JetStream response: $jsz_response"
+              fi
+
+              echo "Final NATS container logs:"
+              docker logs nats-ci-${{ github.run_id }}
+              break
+            fi
+            current_time=$(date +%s)
+            elapsed=$((current_time - start_time))
+            if [ $elapsed -ge $timeout ]; then
+              echo "Timeout reached after ${timeout} seconds"
+              echo "Container logs:"
+              docker logs nats-ci-${{ github.run_id }}
+              echo "Container status:"
+              docker ps -a | grep nats-ci-${{ github.run_id }}
+              exit 1
+            fi
+            sleep 1
+          done
+      - name: Run tests
+        run: go test -race -coverprofile=coverage.txt -covermode=atomic ./...
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.txt
+          fail_ci_if_error: false
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+      - name: Verify dependencies
+        run: go mod verify
+      - name: Build
+        run: go build -v ./...
+      - name: Check formatting
+        run: |
+          gofmt_output=$(gofmt -l -d .)
+          if [ -n "$gofmt_output" ]; then
+            echo "Code is not properly formatted:"
+            echo "$gofmt_output"
+            exit 1
+          fi
+
+  security:
+    name: Security Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: Run govulncheck
+        run: govulncheck ./...
+        continue-on-error: true  # Make this check informational rather than blocking
+      - name: Report vulnerabilities
+        run: |
+          echo "::warning ::Security vulnerabilities were found. Please review the govulncheck output above."
+        if: ${{ failure() }}

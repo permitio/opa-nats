@@ -1,0 +1,125 @@
+---
+alwaysApply: true
+---
+# Cursor Rules — NATS Plugin for OPA
+
+You are editing **github.com/permitio/opa-nats**. The library implements an **LRU cache backed by NATS Key-Value (JetStream)** that *selectively* overrides OPA's runtime store for paths matched by regexes. It is **not** a full OPA storage implementation.
+
+## Core Principles
+
+1. **Do not change the contract**: This is a cache + path router around an embedded `storage.Store`. Only `Read`/`Write` are overridden; everything else must go to the embedded store.
+2. **Regex decides routing**: `handled_paths_regex` is the single source of truth. If it’s empty, nothing is routed to NATS.
+3. **NATS is source of truth for handled paths**: Reads fall back to NATS on cache miss. Writes go to NATS, then update the LRU cache.
+4. **Keep the cache simple**: No hidden global state, no additional layers unless explicitly justified.
+5. **Production-grade (practical) engineering**: clear errors, timeouts, reconnect logic, metrics/status surface, and structured logs.
+
+## Go / Tooling
+
+- **Go version**: match the `go.mod` (bump only with CI + docs update).
+- **Linting**: keep `golangci-lint` clean; fix or justify with inline comments.
+- **Static analysis**: `go vet`, `staticcheck` where possible.
+- **Error handling**: wrap with `%w`; give context (`fmt.Errorf("connect NATS: %w", err)`).
+- **Context**: every external I/O (NATS ops, watchers) must accept `context.Context`.
+- **Generics**: use only when it simplifies code meaningfully.
+
+## Concurrency & Lifecycles
+
+- Watchers/goroutines must:
+  - Respect `ctx.Done()`.
+  - Return on shutdown.
+  - Avoid leaks (document ownership & stop semantics).
+- Reconnect logic:
+  - Honor `max_reconnect_attempts` and `reconnect_wait`.
+  - Surface status to OPA status API.
+
+## Configuration Rules
+
+- Keep config in `natsstore.Config`. Add fields only when needed, document them in README and code comments.
+- Validate config on startup (URLs, TTLs, bucket, auth mode exclusivity).
+- If both `credentials` and `token`/`username` are provided, error out with a helpful message.
+
+## Path Handling
+
+- **Never** route non-matching paths to NATS.
+- Path mapping: OPA `["data","schemas","user"]` → NATS key `data.schemas.user`. Any change here must be explicitly documented and migration noted.
+- Regex must be compiled once and reused.
+
+## Logging & Monitoring
+
+- Structured logging only (key/value). No `Printf`.
+- Respect `log_level` in config.
+- Status API should expose:
+  - Cache size & capacity.
+  - NATS connection state.
+  - Trigger/watch count.
+  - Policy count (from embedded store).
+
+## Testing
+
+- **Unit tests** for:
+  - Regex routing (hit/miss).
+  - Cache TTL behavior.
+  - NATS read/write fallbacks.
+  - Reconnect logic.
+- **Integration tests** (with JetStream) behind a build tag (e.g. `integration`).
+- **Race detector** (`-race`) must pass.
+- Maintain/raise coverage; do not merge coverage regressions without rationale.
+
+## CI
+
+- Do not break `.github/workflows/pr_checks.yml`.
+- Add new tooling steps only if they’re reproducible locally.
+
+## Commits & PRs
+
+- Use **Conventional Commits**:
+  - `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `ci:`, `chore:`
+- Each PR must:
+  - Explain what path(s) it touches (NATS vs embedded store).
+  - List any config or status API changes.
+  - Include tests or justify why not.
+
+## Docs
+
+- README is the single entry point for users. If you add/rename:
+  - Config fields
+  - Status metrics
+  - Path mapping logic
+  then **update README, examples, and comments**.
+- Avoid marketing-y fluff and filler words.
+
+## Security
+
+- Never log secrets (token, username, password, creds path contents).
+- TLS flags must be honored; `tls_insecure` defaults to `false`.
+- Encourage secure defaults in examples.
+
+## Troubleshooting & Errors
+
+- Emit actionable errors:
+  - Connection failures: include URL and selected auth mode (not the secret).
+  - Bucket not found: suggest permission or creation options.
+- Prefer retryable errors where appropriate; otherwise fail fast with context.
+
+## Style
+
+- Keep files short and focused. Split out packages only when it clarifies ownership/boundaries.
+- Prefer small, cohesive interfaces.
+- Name things after what they *do* (e.g., `pathRouter`, `kvBackedCache`).
+
+## Banned Phrases (do not write these)
+
+- dynamic world
+- evolving landscape
+- the world of
+- digital age
+- ever-evolving
+- digital landscape
+- robust
+- myriad
+
+## When You’re Unsure
+
+- Default to the simplest change that preserves public behavior.
+- Add a small test that demonstrates the intent.
+- Leave a short comment pointing back to the README section that explains the behavior.
