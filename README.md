@@ -8,7 +8,21 @@ This plugin provides an LRU cache backed by NATS Key-Value store for OPA. It's n
 
 ## Project Layout
 
-This project follows the [golang-standards/project-layout](https://github.com/golang-standards/project-layout) convention. The main public library code is in [`pkg/natsstore`](pkg/natsstore/). CI, configs, and documentation are at the root.
+This project follows the [golang-standards/project-layout](https://github.com/golang-standards/project-layout) convention:
+
+```
+├── cmd/                         # Applications
+│   └── opa-nats/               # Custom OPA binary with NATS plugin
+├── pkg/                        # Public library code
+│   └── natsstore/             # Core NATS store plugin package
+├── examples/                   # Usage examples
+│   └── handledpaths/          # Complete working example with Docker Compose
+├── Dockerfile                 # Multi-platform container build
+├── go.mod, go.sum            # Go modules
+└── .github/                  # CI/CD configuration
+```
+
+The main public library code is in [`pkg/natsstore`](pkg/natsstore/). The [`cmd/opa-nats`](cmd/opa-nats/) directory contains a ready-to-use OPA binary with the NATS plugin pre-registered.
 
 ## Features
 
@@ -27,13 +41,12 @@ The plugin can be configured through OPA's configuration system. Here's an examp
 plugins:
   nats:
     server_url: "nats://localhost:4222"
-    bucket: "schemas"
-    cache_size: 1000
     ttl: "10m"
     refresh_interval: "30s"
-    watch_prefix: ""
     max_reconnect_attempts: 10
     reconnect_wait: "2s"
+    max_bucket_watchers: 10
+    root_bucket: ""  # Optional - leave empty for multi-bucket mode
 
     # Authentication (choose one)
     credentials: "/path/to/nats.creds"
@@ -48,6 +61,10 @@ plugins:
     tls_key: "/path/to/key.pem"
     tls_ca_cert: "/path/to/ca.pem"
     tls_insecure: false
+
+services:
+  authz:
+    url: http://localhost:8181
 ```
 
 ### Configuration Options
@@ -55,13 +72,12 @@ plugins:
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `server_url` | string | `"nats://localhost:4222"` | NATS server URL |
-| `bucket` | string | `"schemas"` | K/V bucket name |
-| `cache_size` | int | `1000` | Maximum number of entries in LRU cache |
 | `ttl` | duration | `"10m"` | TTL for cache entries |
 | `refresh_interval` | duration | `"30s"` | How often to refresh cache from NATS |
-| `watch_prefix` | string | `""` | Prefix to watch for K/V changes |
 | `max_reconnect_attempts` | int | `10` | Maximum reconnection attempts |
 | `reconnect_wait` | duration | `"2s"` | Wait time between reconnection attempts |
+| `max_bucket_watchers` | int | `10` | Maximum number of bucket watchers in LRU cache |
+| `root_bucket` | string | `""` | Root bucket name for default data (optional) |
 | `credentials` | string | `""` | Path to NATS credentials file |
 | `token` | string | `""` | NATS token for authentication |
 | `username` | string | `""` | NATS username |
@@ -70,32 +86,40 @@ plugins:
 | `tls_key` | string | `""` | Path to TLS private key |
 | `tls_ca_cert` | string | `""` | Path to TLS CA certificate |
 | `tls_insecure` | bool | `false` | Skip TLS certificate verification |
-| `handled_paths_regex` | []string | `[]` | List of regex patterns for handled paths. If empty, uses default paths. |
 
-## Example: Regex Handled Paths
+## Built-in Functions
 
-To use regex for handled paths, add the `handled_paths_regex` field to your plugin config:
+The plugin provides custom Rego built-in functions for interacting with NATS K/V:
 
-```yaml
-plugins:
-  nats:
-    server_url: "nats://localhost:4222"
-    bucket: "schemas"
-    cache_size: 1000
-    ttl: "10m"
-    handled_paths_regex:
-      - "^data/schemas($|/.*)"
-      - "^data/resource_types($|/.*)"
-      - "^data/relationships($|/.*)"
-      - "^data/role_assignments($|/.*)"
-      - "^data/custom_prefix($|/.*)"
+### `nats.kv.watch_bucket(bucket_name)`
+
+Watches a NATS K/V bucket and returns all its data. This function automatically manages bucket watchers with LRU caching.
+
+```rego
+# Watch a specific bucket
+group_data := nats.kv.watch_bucket("550e8400-e29b-41d4-a716-446655440000")
+
+# Access nested data
+members := group_data.members
+permissions := group_data.permissions
 ```
 
-If `handled_paths_regex` is omitted or empty, the default paths will be used.
+### `nats.kv.get_data(bucket_name, key)`
+
+Retrieves a specific key from a NATS K/V bucket.
+
+```rego
+# Get specific data from a bucket
+user_data := nats.kv.get_data("users", "123e4567-e89b-12d3-a456-426614174000")
+```
 
 ## Examples
 
-See [`examples/handledpaths`](examples/handledpaths/) for a minimal Go example showing how to configure and use the plugin with `handled_paths_regex` and OPA integration.
+See [`examples/handledpaths`](examples/handledpaths/) for a complete example with:
+- Custom OPA binary with NATS plugin
+- Docker Compose setup with NATS server and UI
+- Example Rego policies using the built-in functions
+- Test data setup and configuration
 
 ## Usage
 
@@ -105,85 +129,59 @@ See [`examples/handledpaths`](examples/handledpaths/) for a minimal Go example s
 import "github.com/permitio/opa-nats/pkg/natsstore"
 ```
 
-### 2. Integrate with OPA
+### 2. Using the Custom Binary
 
-The recommended way to use this plugin with OPA is to provide your plugin configuration in a JSON or YAML file and set the `ConfigFile` field of `runtime.Params` when starting OPA. See [`examples/handledpaths`](examples/handledpaths/) for a complete example.
-
-**Example:**
+The simplest way to use this plugin is with the pre-built custom OPA binary:
 
 ```go
 package main
 
 import (
-	"context"
-	"encoding/json"
 	"log"
-	"os"
-	"time"
 
+	"github.com/open-policy-agent/opa/cmd"
 	"github.com/open-policy-agent/opa/v1/runtime"
 	natsstore "github.com/permitio/opa-nats/pkg/natsstore"
 )
 
 func main() {
-	pluginConfig := &natsstore.Config{
-		ServerURL:         "nats://localhost:4222",
-		Bucket:            "schemas",
-		CacheSize:         100,
-		TTL:               natsstore.Duration(5 * time.Minute),
-		HandledPathsRegex: []string{"^data/schemas($|/.*)", "^data/custom($|/.*)"},
-	}
+	// Register the plugin
+	pluginFactory := natsstore.NewPluginFactory()
+	runtime.RegisterPlugin(natsstore.PluginName, pluginFactory)
 
-	configBytes, err := json.Marshal(pluginConfig)
-	if err != nil {
-		log.Fatalf("Failed to marshal config: %v", err)
-	}
-	var configMap map[string]interface{}
-	if err := json.Unmarshal(configBytes, &configMap); err != nil {
-		log.Fatalf("Failed to unmarshal config to map: %v", err)
-	}
-
-	opaConfig := map[string]interface{}{
-		"plugins": map[string]interface{}{
-			natsstore.PluginName: configMap,
-		},
-	}
-
-	tmpfile, err := os.CreateTemp("", "opa-config-*.json")
-	if err != nil {
-		log.Fatalf("Failed to create temp config file: %v", err)
-	}
-	defer os.Remove(tmpfile.Name())
-
-	encoder := json.NewEncoder(tmpfile)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(opaConfig); err != nil {
-		log.Fatalf("Failed to write config to file: %v", err)
-	}
-	if err := tmpfile.Close(); err != nil {
-		log.Fatalf("Failed to close config file: %v", err)
-	}
-
-	ctx := context.Background()
-	params := runtime.Params{
-		ConfigFile: tmpfile.Name(),
-	}
-	_, err = runtime.NewRuntime(ctx, params)
-	if err != nil {
-		log.Fatalf("Failed to start OPA runtime: %v", err)
+	// Run OPA with the registered plugin
+	if err := cmd.RootCommand.Execute(); err != nil {
+		log.Fatalf("Failed to execute OPA runtime: %v", err)
 	}
 }
 ```
 
-### 3. Configure OPA
+### 3. Library Integration
+
+For custom integrations, you can use the plugin as a library. See [`examples/handledpaths/main.go`](examples/handledpaths/main.go) for a complete example.
+
+### 4. Configure OPA
 
 Create an OPA configuration file that includes the plugin (see above for YAML or JSON example).
 
-### 4. Start OPA
+### 5. Start OPA
+
+#### Using the pre-built binary:
 
 ```bash
-./permit-opa run --server --config-file opa-config.yaml
+./opa run --server --config-file opa-config.yaml
 ```
+
+#### Using Docker:
+
+```bash
+docker run -p 8181:8181 -v ./config.yaml:/config.yaml opa-nats \
+  run --server --config-file=/config.yaml --addr=0.0.0.0:8181
+```
+
+#### Using Docker Compose (recommended for development):
+
+See [`examples/handledpaths/docker-compose.yaml`](examples/handledpaths/docker-compose.yaml) for a complete setup with NATS server and example data.
 
 ## How It Works
 
@@ -290,8 +288,22 @@ This is a standalone Go library, maintained in the [opa-nats](https://github.com
 
 ### Building
 
+#### Custom OPA Binary
+
 ```bash
-go build -o ./opa-nats .
+go build -o opa ./cmd/opa-nats
+```
+
+#### Docker Image
+
+```bash
+docker build -t opa-nats .
+```
+
+#### Multi-platform Docker Build
+
+```bash
+docker buildx build --platform linux/amd64,linux/arm64 -t opa-nats .
 ```
 
 ### Testing
