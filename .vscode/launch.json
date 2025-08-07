@@ -9,17 +9,17 @@
             "type": "go",
             "request": "launch",
             "mode": "auto",
-            "program": "${workspaceFolder}/examples/handledpaths/main.go",
+            "program": "${workspaceFolder}/opa-nats/main.go",
             "args": [
                 "run",
                 "--server",
                 "--config-file",
-                "${workspaceFolder}/examples/handledpaths/config.yaml",
+                "${workspaceFolder}/examples/opa-nats/config.yaml",
                 "--log-format",
                 "text",
                 "--log-level",
                 "debug",
-                "${workspaceFolder}/examples/handledpaths/rego"
+                "${workspaceFolder}/examples/opa-nats/rego"
             ]
         }
     ]

@@ -3,7 +3,6 @@ version: '3.8'
 services:
   nats:
     image: nats:2.10-alpine
-    container_name: nats-server
     command: >
       --jetstream
       --store_dir=/data
@@ -38,7 +37,6 @@ services:
   # NATS CLI for testing and setup
   nats-cli:
     image: natsio/nats-box:latest
-    container_name: nats-cli-test
     depends_on:
       nats:
         condition: service_healthy
@@ -52,7 +50,6 @@ services:
   # Test data setup service
   nats-setup:
     image: natsio/nats-box:latest
-    container_name: nats-setup
     depends_on:
       nats:
         condition: service_healthy

@@ -16,7 +16,7 @@ This project follows the [golang-standards/project-layout](https://github.com/go
 ├── pkg/                        # Public library code
 │   └── natsstore/             # Core NATS store plugin package
 ├── examples/                   # Usage examples
-│   └── handledpaths/          # Complete working example with Docker Compose
+│   └── opa-nats/              # Complete working example with Docker Compose
 ├── Dockerfile                 # Multi-platform container build
 ├── go.mod, go.sum            # Go modules
 └── .github/                  # CI/CD configuration
@@ -115,11 +115,13 @@ user_data := nats.kv.get_data("users", "123e4567-e89b-12d3-a456-426614174000")
 
 ## Examples
 
-See [`examples/handledpaths`](examples/handledpaths/) for a complete example with:
-- Custom OPA binary with NATS plugin
+See [`examples/opa-nats`](examples/opa-nats/) for a complete example with:
 - Docker Compose setup with NATS server and UI
 - Example Rego policies using the built-in functions
 - Test data setup and configuration
+- OPA configuration files
+
+The custom OPA binary is located in [`cmd/opa-nats`](cmd/opa-nats/).
 
 ## Usage
 
@@ -158,7 +160,7 @@ func main() {
 
 ### 3. Library Integration
 
-For custom integrations, you can use the plugin as a library. See [`examples/handledpaths/main.go`](examples/handledpaths/main.go) for a complete example.
+For custom integrations, you can use the plugin as a library. The [`cmd/opa-nats/main.go`](cmd/opa-nats/main.go) shows the simplest integration approach.
 
 ### 4. Configure OPA
 
@@ -181,7 +183,7 @@ docker run -p 8181:8181 -v ./config.yaml:/config.yaml opa-nats \
 
 #### Using Docker Compose (recommended for development):
 
-See [`examples/handledpaths/docker-compose.yaml`](examples/handledpaths/docker-compose.yaml) for a complete setup with NATS server and example data.
+See [`examples/opa-nats/docker-compose.yaml`](examples/opa-nats/docker-compose.yaml) for a complete setup with NATS server and example data.
 
 ## How It Works
 
