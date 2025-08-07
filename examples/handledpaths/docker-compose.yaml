@@ -131,13 +131,13 @@ services:
   opa:
     build:
       context: ../../
-      dockerfile: examples/handledpaths/Dockerfile
-    container_name: opa-server
+      dockerfile: Dockerfile
     depends_on:
       nats:
         condition: service_healthy
       nats-setup:
         condition: service_completed_successfully
+    command: ["run", "--server", "--config-file=/config/config.yaml", "/policies", "--addr", "0.0.0.0:8181"]
     ports:
       - "8181:8181"
     volumes:
