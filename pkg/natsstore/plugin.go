@@ -252,10 +252,17 @@ func (f *PluginFactory) Validate(manager *plugins.Manager, config []byte) (any, 
 		return nil, fmt.Errorf("invalid plugin config: %w", err)
 	}
 
-	logger.Info("Validated NATS K/V store plugin config: %+v", pluginConfig)
+	logger.Info("Validated NATS K/V store plugin config, attempting to connect")
 
 	// Store reference to original store
 	f.originalStore = manager.Store
+
+	// Create the bucket data manager during plugin creation
+	_, err := NewNATSClient(pluginConfig, logger)
+	if err != nil {
+		logger.Error("Failed to connect to NATS: %v", err)
+		return nil, fmt.Errorf("failed to connect to NATS: %w", err)
+	}
 
 	return pluginConfig, nil
 }

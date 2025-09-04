@@ -59,6 +59,8 @@ func (nc *NATSClient) connect() error {
 	// Add authentication options
 	if nc.config.Credentials != "" {
 		opts = append(opts, nats.UserCredentials(nc.config.Credentials))
+	} else if nc.config.UserJwt != "" && nc.config.UserNkeySeed != "" {
+		opts = append(opts, nats.UserJWTAndSeed(nc.config.UserJwt, nc.config.UserNkeySeed))
 	} else if nc.config.Token != "" {
 		opts = append(opts, nats.Token(nc.config.Token))
 	} else if nc.config.Username != "" && nc.config.Password != "" {

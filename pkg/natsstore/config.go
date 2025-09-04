@@ -30,15 +30,17 @@ func (d Duration) String() string {
 // Config represents the NATS K/V store plugin configuration.
 type Config struct {
 	// NATS connection settings
-	ServerURL   string `json:"server_url"`
-	Credentials string `json:"credentials,omitempty"`
-	Token       string `json:"token,omitempty"`
-	Username    string `json:"username,omitempty"`
-	Password    string `json:"password,omitempty"`
-	TLSCert     string `json:"tls_cert,omitempty"`
-	TLSKey      string `json:"tls_key,omitempty"`
-	TLSCACert   string `json:"tls_ca_cert,omitempty"`
-	TLSInsecure bool   `json:"tls_insecure,omitempty"`
+	ServerURL    string `json:"server_url"`
+	Credentials  string `json:"credentials,omitempty"`
+	Token        string `json:"token,omitempty"`
+	Username     string `json:"username,omitempty"`
+	Password     string `json:"password,omitempty"`
+	UserJwt      string `json:"user_jwt,omitempty"`
+	UserNkeySeed string `json:"user_nkey_seed,omitempty"`
+	TLSCert      string `json:"tls_cert,omitempty"`
+	TLSKey       string `json:"tls_key,omitempty"`
+	TLSCACert    string `json:"tls_ca_cert,omitempty"`
+	TLSInsecure  bool   `json:"tls_insecure,omitempty"`
 
 	// Cache settings
 	TTL                  Duration `json:"ttl"`
