@@ -14,18 +14,18 @@ import (
 
 // BucketWatcher manages watching and caching for a specific bucket.
 type BucketWatcher struct {
-	bucketName      string
-	watcher         nats.KeyWatcher
-	natsClient      *NATSClient
-	dataTransformer *DataTransformer
-	opaStore        storage.Store // Reference to OPA store for data injection
-	logger          logging.Logger
-	ctx             context.Context
-	cancel          context.CancelFunc
-	mu              sync.RWMutex
-	started         bool
-	stopFinished    chan struct{}
-	isRoot          bool
+	bucketName            string
+	watcher               nats.KeyWatcher
+	natsClient            *NATSClient
+	dataTransformer       *DataTransformer
+	opaStore              storage.Store // Reference to OPA store for data injection
+	logger                logging.Logger
+	ctx                   context.Context
+	cancel                context.CancelFunc
+	mu                    sync.RWMutex
+	started               bool
+	watcherLoopStopSignal chan struct{}
+	isRoot                bool
 }
 
 // NewBucketWatcher creates a new bucket-specific watcher.
@@ -33,15 +33,15 @@ func NewBucketWatcher(bucketName string, natsClient *NATSClient, logger logging.
 	ctx, cancel := context.WithCancel(context.Background())
 
 	watcher := &BucketWatcher{
-		bucketName:      bucketName,
-		natsClient:      natsClient,
-		dataTransformer: dataTransformer,
-		opaStore:        opaStore,
-		logger:          logger,
-		ctx:             ctx,
-		cancel:          cancel,
-		isRoot:          isRoot,
-		stopFinished:    make(chan struct{}),
+		bucketName:            bucketName,
+		natsClient:            natsClient,
+		dataTransformer:       dataTransformer,
+		opaStore:              opaStore,
+		logger:                logger,
+		ctx:                   ctx,
+		cancel:                cancel,
+		isRoot:                isRoot,
+		watcherLoopStopSignal: make(chan struct{}, 1),
 	}
 
 	return watcher, nil
@@ -115,15 +115,15 @@ func (gw *BucketWatcher) cleanOPAStore() error {
 func (gw *BucketWatcher) Stop() error {
 	gw.mu.Lock()
 	defer gw.mu.Unlock()
-
 	if !gw.started {
 		return nil
 	}
 
-	gw.cancel()
+	// the last thing we do in the stop is to cancel the context to ensure no leftover residues
+	gw.watcherLoopStopSignal <- struct{}{}
 
-	// wait for the goroutine to finish
-	<-gw.stopFinished
+	// wait for the goroutine to finish by waiting for the channel to be closed
+	<-gw.watcherLoopStopSignal
 	if gw.watcher != nil {
 		if err := gw.watcher.Stop(); err != nil {
 			gw.logger.Error("Failed to stop watcher for bucket %s: %v", gw.bucketName, err)
@@ -146,8 +146,9 @@ func (gw *BucketWatcher) watchLoop() {
 
 	for {
 		select {
-		case <-gw.ctx.Done():
-			close(gw.stopFinished)
+		case <-gw.watcherLoopStopSignal:
+			// if we receive a message on the channel, we close it and return
+			close(gw.watcherLoopStopSignal)
 			return
 		case entry := <-gw.watcher.Updates():
 			if entry == nil {
@@ -166,7 +167,7 @@ func (gw *BucketWatcher) handleKVUpdate(entry nats.KeyValueEntry) {
 
 	switch entry.Operation() {
 	case nats.KeyValuePut:
-		var value interface{}
+		var value any
 		if err := json.Unmarshal(entry.Value(), &value); err != nil {
 			// If JSON unmarshal fails, store as string
 			value = string(entry.Value())

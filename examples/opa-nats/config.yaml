@@ -1,6 +1,6 @@
 plugins:
   nats:
-    server_url: "nats://nats:4222"
+    server_url: "nats://localhost:4222"
     ttl: "10m"
     refresh_interval: "30s"
     max_reconnect_attempts: 10
