@@ -32,6 +32,18 @@ func TestIntegration(t *testing.T) {
 		t.Fatalf("Examples directory does not exist: %s", examplesDir)
 	}
 
+	// Resolve the test-only compose override that drops host-port bindings on
+	// services we don't talk to (NATS, NATS UI). Only OPA's 8181 needs to be
+	// reachable from the test runner. This avoids host-port collisions with
+	// e.g. the GHA workflow's `services: nats:` (which already binds 4222).
+	pwd, err := os.Getwd()
+	require.NoError(t, err)
+	overrideFile, err := filepath.Abs(filepath.Join(pwd, "docker-compose.test.override.yaml"))
+	require.NoError(t, err)
+	if _, err := os.Stat(overrideFile); err != nil {
+		t.Fatalf("Test override compose file missing at %s: %v", overrideFile, err)
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -43,15 +55,23 @@ func TestIntegration(t *testing.T) {
 	err = os.Chdir(examplesDir)
 	require.NoError(t, err)
 
-	// Clean up any existing containers
+	// Clean up any existing containers (also runs at end via t.Cleanup).
+	composeArgs := []string{"compose", "-f", "docker-compose.yaml", "-f", overrideFile}
 	t.Cleanup(func() {
-		os.Chdir(examplesDir)
-		exec.Command("docker", "compose", "down", "-v").Run()
+		_ = os.Chdir(examplesDir)
+		downArgs := append([]string{}, composeArgs...)
+		downArgs = append(downArgs, "down", "-v", "--remove-orphans")
+		exec.Command("docker", downArgs...).Run()
 	})
+	preDown := append([]string{}, composeArgs...)
+	preDown = append(preDown, "down", "-v", "--remove-orphans")
+	_ = exec.Command("docker", preDown...).Run()
 
-	// Start docker-compose services
+	// Start docker-compose services with the test override applied.
 	t.Log("Starting docker-compose services...")
-	cmd := exec.CommandContext(ctx, "docker", "compose", "up", "-d", "--build")
+	upArgs := append([]string{}, composeArgs...)
+	upArgs = append(upArgs, "up", "-d", "--build")
+	cmd := exec.CommandContext(ctx, "docker", upArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	err = cmd.Run()
