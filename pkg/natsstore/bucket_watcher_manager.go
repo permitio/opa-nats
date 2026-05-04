@@ -261,35 +261,57 @@ func (gwm *BucketWatcherManager) CreateRootWatcher(opaStore storage.Store) (*Buc
 }
 
 // GetOrCreateWatcher gets an existing watcher for a bucket or creates a new one.
+//
+// IMPORTANT: gwm.mu is held only for the cache lookup/insert, NOT during
+// NewBucketWatcher / watcher.Start(). watcher.Start() ultimately writes to the
+// OPA inmem store via Commit (which takes the store's RWMutex.Lock). If this
+// function is invoked from a goroutine spawned inside a Rego builtin, the
+// parent goroutine still holds the inmem store's RLock for the duration of
+// its read transaction, so Commit cannot acquire the store's write lock until
+// the parent's read transaction closes. Holding gwm.mu across that long wait
+// would block any concurrent watch_bucket / HasWatcher call by the parent on
+// gwm.mu.RLock — producing a self-deadlock between the parent goroutine and
+// the spawned writer.
 func (gwm *BucketWatcherManager) GetOrCreateWatcher(bucketName string, opaStore storage.Store) (*BucketWatcher, error) {
-	gwm.mu.Lock()
-	defer gwm.mu.Unlock()
-
-	// Try to get existing watcher
+	// Fast path: check if a watcher already exists under read lock.
+	gwm.mu.RLock()
 	if watcher, exists := gwm.watchers.Get(bucketName); exists {
+		gwm.mu.RUnlock()
 		gwm.logger.Debug("Using existing bucket watcher for: %s", bucketName)
 		return watcher, nil
 	}
+	gwm.mu.RUnlock()
 
-	// Create new watcher
+	// Slow path: create and start a new watcher WITHOUT holding gwm.mu.
+	// Two concurrent callers for the same bucket may race here; ContainsOrAdd
+	// below resolves that race and the loser's watcher is stopped.
 	watcher, err := NewBucketWatcher(bucketName, gwm.natsClient, gwm.logger, gwm.dataTransformer, opaStore, false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create bucket watcher for %s: %w", bucketName, err)
 	}
 
-	// Start the watcher
 	if err := watcher.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start bucket watcher for %s: %w", bucketName, err)
 	}
 
-	// Add to LRU cache (this may evict the least recently used watcher)
+	// Insert into the LRU cache under write lock.
+	gwm.mu.Lock()
 	alreadyExisted, evicted := gwm.watchers.ContainsOrAdd(bucketName, watcher)
+	gwm.mu.Unlock()
+
 	if evicted {
 		gwm.logger.Debug("Added new bucket watcher for %s, evicted LRU watcher", bucketName)
 	} else if alreadyExisted {
 		gwm.logger.Debug("Bucket watcher for %s already existed, stopping the newly created to prevent residues goroutines", bucketName)
 		if err := watcher.Stop(); err != nil {
 			gwm.logger.Error("Failed to stop bucket watcher for %s: %v", bucketName, err)
+		}
+		// Return the canonical watcher that won the race.
+		gwm.mu.RLock()
+		existing, _ := gwm.watchers.Get(bucketName)
+		gwm.mu.RUnlock()
+		if existing != nil {
+			return existing, nil
 		}
 	} else {
 		gwm.logger.Debug("Added new bucket watcher for: %s", bucketName)
