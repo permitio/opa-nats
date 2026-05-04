@@ -57,8 +57,22 @@ func TestIntegration(t *testing.T) {
 
 	// Clean up any existing containers (also runs at end via t.Cleanup).
 	composeArgs := []string{"compose", "-f", "docker-compose.yaml", "-f", overrideFile}
+	dumpComposeLogs := func(reason string) {
+		t.Logf("Dumping docker compose logs (%s):", reason)
+		logsArgs := append([]string{}, composeArgs...)
+		logsArgs = append(logsArgs, "logs", "--no-color", "--tail", "200")
+		out, _ := exec.Command("docker", logsArgs...).CombinedOutput()
+		t.Logf("--- BEGIN compose logs ---\n%s\n--- END compose logs ---", string(out))
+		psArgs := append([]string{}, composeArgs...)
+		psArgs = append(psArgs, "ps", "-a")
+		ps, _ := exec.Command("docker", psArgs...).CombinedOutput()
+		t.Logf("--- compose ps ---\n%s", string(ps))
+	}
 	t.Cleanup(func() {
 		_ = os.Chdir(examplesDir)
+		if t.Failed() {
+			dumpComposeLogs("test failed")
+		}
 		downArgs := append([]string{}, composeArgs...)
 		downArgs = append(downArgs, "down", "-v", "--remove-orphans")
 		exec.Command("docker", downArgs...).Run()
@@ -79,7 +93,10 @@ func TestIntegration(t *testing.T) {
 
 	// Wait for OPA to be ready
 	t.Log("Waiting for OPA to be ready...")
-	require.NoError(t, waitForOPA(ctx, "http://localhost:8181"))
+	if err := waitForOPA(ctx, "http://localhost:8181"); err != nil {
+		dumpComposeLogs("OPA never became ready")
+		t.Fatalf("OPA never became ready: %v", err)
+	}
 
 	// Test OPA health endpoint
 	t.Run("OPA Health Check", func(t *testing.T) {
