@@ -122,7 +122,13 @@ func TestIntegration(t *testing.T) {
 		}
 	})
 
-	// Test bucket watching behavior - first call should show bucket_watched: false, second: true
+	// Test bucket watching behavior. The first call to nats.kv.watch_bucket
+	// for a fresh bucket spawns an async goroutine that loads bucket data
+	// and registers the watcher. We expect bucket_watched=false on the very
+	// first call, then bucket_watched=true on a subsequent call once the
+	// async registration has completed. Because that registration happens
+	// off the request-handling path, we poll instead of asserting that the
+	// second call alone is enough.
 	t.Run("Bucket Watching Behavior", func(t *testing.T) {
 		bucketID := "550e8400-e29b-41d4-a716-446655440000"
 		input := map[string]interface{}{
@@ -146,49 +152,76 @@ func TestIntegration(t *testing.T) {
 		require.True(t, ok, "x should be present")
 		t.Logf("First call - bucket_watched: %v, x: %+v", bucketWatched1, x1)
 
-		// Second call - should show bucket_watched: true (bucket is now cached)
-		result2 := evaluatePolicy(t, "data.test", input)
-		t.Logf("Second call result: %+v", result2)
+		// Poll until the async watcher registration completes (bucket_watched=true)
+		// or we exceed the deadline.
+		var resultData2 map[string]interface{}
+		require.Eventually(t, func() bool {
+			r := evaluatePolicy(t, "data.test", input)
+			rd, ok := r["result"].(map[string]interface{})
+			if !ok {
+				return false
+			}
+			bw, ok := rd["bucket_watched"].(bool)
+			if !ok {
+				return false
+			}
+			if bw {
+				resultData2 = rd
+			}
+			return bw
+		}, 30*time.Second, 200*time.Millisecond, "bucket_watched never became true within 30s")
 
-		require.Contains(t, result2, "result")
-		resultData2 := result2["result"].(map[string]interface{})
+		t.Logf("Subsequent call - bucket_watched: true, x: %+v", resultData2["x"])
 
-		// Should have bucket_watched: true on second call
-		bucketWatched2, ok := resultData2["bucket_watched"]
-		require.True(t, ok, "bucket_watched should be present")
-		assert.True(t, bucketWatched2.(bool), "Second call should have bucket_watched: true")
+		// x should be the same once the watcher is registered
+		assert.Equal(t, x1, resultData2["x"], "x should be the same in both calls")
 
-		// Should have x field
-		x2, ok := resultData2["x"]
-		require.True(t, ok, "x should be present")
-		t.Logf("Second call - bucket_watched: %v, x: %+v", bucketWatched2, x2)
-
-		// x should be the same in both calls
-		assert.Equal(t, x1, x2, "x should be the same in both calls")
-
-		t.Log("✅ Bucket watching behavior verified: first call cached bucket, second call used cached data")
+		t.Log("Bucket watching behavior verified: bucket_watched flips to true once the async watcher registration completes")
 	})
 
-	// Test that x returns consistent data regardless of bucket watching state
+	// Test that x returns consistent data regardless of bucket watching state.
+	// Use a different bucket so we do not piggyback on the watcher registered
+	// by the previous subtest.
 	t.Run("Data Consistency Test", func(t *testing.T) {
 		bucketID := "660e8400-e29b-41d4-a716-446655440001" // Developers group
 		input := map[string]interface{}{
 			"bucket_id": bucketID,
 		}
 
-		// Call multiple times and verify x is consistent
-		results := make([]map[string]interface{}, 3)
-		for i := 0; i < 3; i++ {
-			result := evaluatePolicy(t, "data.test", input)
-			require.Contains(t, result, "result")
-			results[i] = result["result"].(map[string]interface{})
-			t.Logf("Call %d result: %+v", i+1, results[i])
-		}
+		// First call
+		first := evaluatePolicy(t, "data.test", input)
+		require.Contains(t, first, "result")
+		firstData := first["result"].(map[string]interface{})
+		t.Logf("First call result: %+v", firstData)
+		assert.False(t, firstData["bucket_watched"].(bool), "First call should have bucket_watched: false")
 
-		// First call should be bucket_watched: false, subsequent calls: true
+		// Wait for the async registration before checking subsequent calls.
+		var watchedData map[string]interface{}
+		require.Eventually(t, func() bool {
+			r := evaluatePolicy(t, "data.test", input)
+			rd, ok := r["result"].(map[string]interface{})
+			if !ok {
+				return false
+			}
+			bw, _ := rd["bucket_watched"].(bool)
+			if bw {
+				watchedData = rd
+			}
+			return bw
+		}, 30*time.Second, 200*time.Millisecond, "bucket_watched never became true within 30s")
+
+		results := []map[string]interface{}{firstData, watchedData}
+
+		// One more call after the watcher is registered — should still see true.
+		extra := evaluatePolicy(t, "data.test", input)
+		require.Contains(t, extra, "result")
+		extraData := extra["result"].(map[string]interface{})
+		t.Logf("Post-watcher call result: %+v", extraData)
+		results = append(results, extraData)
+
 		assert.False(t, results[0]["bucket_watched"].(bool), "First call should have bucket_watched: false")
-		assert.True(t, results[1]["bucket_watched"].(bool), "Second call should have bucket_watched: true")
-		assert.True(t, results[2]["bucket_watched"].(bool), "Third call should have bucket_watched: true")
+		assert.True(t, results[1]["bucket_watched"].(bool), "Post-registration call should have bucket_watched: true")
+		assert.True(t, results[2]["bucket_watched"].(bool), "Subsequent call should have bucket_watched: true")
 
 		// All x values should be the same
 		x0 := results[0]["x"]
