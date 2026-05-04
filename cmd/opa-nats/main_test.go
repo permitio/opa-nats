@@ -173,8 +173,18 @@ func TestIntegration(t *testing.T) {
 
 		t.Logf("Subsequent call - bucket_watched: true, x: %+v", resultData2["x"])
 
-		// x should be the same once the watcher is registered
-		assert.Equal(t, x1, resultData2["x"], "x should be the same in both calls")
+		// The two calls intentionally return different shapes for `x`:
+		//   bucket_watched=false → x = nats.kv.get_data(bucket, "members")  (members map only)
+		//   bucket_watched=true  → x = data.nats.kv[bucket]                  (entire bucket)
+		// What we verify is that the members data the unwatched path returns
+		// matches the members data the watched path stores under the bucket.
+		x1Members, ok1 := x1.(map[string]interface{})
+		require.True(t, ok1, "x1 should be a map (members)")
+		x2Bucket, ok2 := resultData2["x"].(map[string]interface{})
+		require.True(t, ok2, "x2 should be a map (bucket)")
+		x2Members, ok2m := x2Bucket["members"].(map[string]interface{})
+		require.True(t, ok2m, "x2 should contain members map")
+		assert.Equal(t, x1Members, x2Members, "members data should match between unwatched and watched calls")
 
 		t.Log("Bucket watching behavior verified: bucket_watched flips to true once the async watcher registration completes")
 	})
@@ -223,15 +233,24 @@ func TestIntegration(t *testing.T) {
 		assert.True(t, results[1]["bucket_watched"].(bool), "Post-registration call should have bucket_watched: true")
 		assert.True(t, results[2]["bucket_watched"].(bool), "Subsequent call should have bucket_watched: true")
 
-		// All x values should be the same
-		x0 := results[0]["x"]
-		x1 := results[1]["x"]
-		x2 := results[2]["x"]
+		// As in the previous subtest, the bucket_watched=false branch returns
+		// only the `members` submap, while the bucket_watched=true branch
+		// returns the entire bucket. Compare the members slice from each
+		// representation rather than the raw `x` values.
+		x0Members, ok0 := results[0]["x"].(map[string]interface{})
+		require.True(t, ok0, "x[0] should be a members map")
+		x1Bucket, ok1 := results[1]["x"].(map[string]interface{})
+		require.True(t, ok1, "x[1] should be a bucket map")
+		x2Bucket, ok2 := results[2]["x"].(map[string]interface{})
+		require.True(t, ok2, "x[2] should be a bucket map")
 
-		assert.Equal(t, x0, x1, "x should be same between first and second call")
-		assert.Equal(t, x1, x2, "x should be same between second and third call")
+		x1Members, _ := x1Bucket["members"].(map[string]interface{})
+		x2Members, _ := x2Bucket["members"].(map[string]interface{})
 
-		t.Logf("✅ Data consistency verified: x remains %+v across all calls", x0)
+		assert.Equal(t, x0Members, x1Members, "members data should match between unwatched and post-watcher calls")
+		assert.Equal(t, x1Members, x2Members, "members data should be stable across consecutive watched calls")
+
+		t.Logf("Data consistency verified: members data is stable across watched/unwatched and consecutive calls")
 	})
 }
 
