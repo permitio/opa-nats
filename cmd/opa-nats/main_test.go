@@ -43,10 +43,27 @@ func TestIntegration(t *testing.T) {
 	err = os.Chdir(examplesDir)
 	require.NoError(t, err)
 
-	// Clean up any existing containers
+	// Clean up any existing containers (also runs at the end via t.Cleanup below).
+	// Pre-run cleanup matters because a previous run on the same CI host may have
+	// leaked containers still binding our published ports (4222, 8222, 8181, 31311),
+	// which would cause `docker compose up` to fail with
+	// "Bind for 0.0.0.0:4222 failed: port is already allocated".
+	composeDown := func() {
+		_ = exec.Command("docker", "compose", "down", "-v", "--remove-orphans").Run()
+	}
+	composeDown()
+	// Belt-and-braces: forcibly remove any container still publishing our ports.
+	for _, port := range []string{"4222", "8222", "8181", "31311"} {
+		out, _ := exec.Command("docker", "ps", "-q", "--filter", "publish="+port).Output()
+		ids := strings.Fields(string(out))
+		if len(ids) > 0 {
+			args := append([]string{"rm", "-f"}, ids...)
+			_ = exec.Command("docker", args...).Run()
+		}
+	}
 	t.Cleanup(func() {
-		os.Chdir(examplesDir)
-		exec.Command("docker", "compose", "down", "-v").Run()
+		_ = os.Chdir(examplesDir)
+		composeDown()
 	})
 
 	// Start docker-compose services
