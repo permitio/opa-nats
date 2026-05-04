@@ -58,7 +58,9 @@ func TestIntegration(t *testing.T) {
 	// Clean up any existing containers (also runs at end via t.Cleanup).
 	composeArgs := []string{"compose", "-f", "docker-compose.yaml", "-f", overrideFile}
 	dumpComposeLogs := func(reason string) {
-		t.Logf("Dumping docker compose logs (%s):", reason)
+		t.Logf("Dumping diagnostics (%s):", reason)
+		// OPA goroutine dump first — most useful for diagnosing hung requests.
+		t.Logf("--- BEGIN OPA goroutine dump ---\n%s\n--- END OPA goroutine dump ---", fetchOPAGoroutineDump())
 		logsArgs := append([]string{}, composeArgs...)
 		logsArgs = append(logsArgs, "logs", "--no-color", "--tail", "200")
 		out, _ := exec.Command("docker", logsArgs...).CombinedOutput()
@@ -221,7 +223,13 @@ func waitForOPA(ctx context.Context, url string) error {
 	}
 }
 
-// evaluatePolicy evaluates a policy with input data
+// evaluatePolicy evaluates a policy with input data.
+//
+// Uses a per-request HTTP timeout of 30s. If OPA hangs (e.g. policy
+// evaluation deadlocks), the test fails with a clear timeout error
+// within 30s instead of hanging until the Go test framework's 10-minute
+// kill — which would prevent t.Cleanup from running and dumping
+// compose logs.
 func evaluatePolicy(t *testing.T, path string, input map[string]interface{}) map[string]interface{} {
 	payload := map[string]interface{}{
 		"input": input,
@@ -237,8 +245,9 @@ func evaluatePolicy(t *testing.T, path string, input map[string]interface{}) map
 	}
 
 	url := fmt.Sprintf("http://localhost:8181/v1/data/%s", apiPath)
-	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
-	require.NoError(t, err)
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	require.NoError(t, err, "POST %s timed out or failed (OPA likely hung) — see compose logs in cleanup", url)
 	defer resp.Body.Close()
 
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -251,4 +260,24 @@ func evaluatePolicy(t *testing.T, path string, input map[string]interface{}) map
 	require.NoError(t, err)
 
 	return result
+}
+
+// fetchOPAGoroutineDump returns OPA's full goroutine stack via pprof.
+// OPA must be started with --pprof for this to work; the test compose
+// override adds it. Returns the empty string if pprof is unavailable.
+func fetchOPAGoroutineDump() string {
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get("http://localhost:8181/debug/pprof/goroutine?debug=2")
+	if err != nil {
+		return fmt.Sprintf("(failed to fetch goroutine dump: %v)", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Sprintf("(pprof returned HTTP %d)", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Sprintf("(failed to read pprof body: %v)", err)
+	}
+	return string(body)
 }

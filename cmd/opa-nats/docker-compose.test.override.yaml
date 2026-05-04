@@ -3,8 +3,12 @@
 # runner so we don't collide with whatever else may be using those ports
 # on the host (in CI, the workflow's `services: nats:` already binds 4222).
 # OPA's 8181 is the only port the test reaches, so it stays published.
+# Adds --pprof to OPA so the test can grab a goroutine dump from
+# /debug/pprof/goroutine?debug=2 if a request hangs.
 services:
   nats:
     ports: !reset []
   nats-ui:
     ports: !reset []
+  opa:
+    command: ["run", "--server", "--config-file=/config/config.yaml", "/policies", "--addr", "0.0.0.0:8181", "--pprof"]
