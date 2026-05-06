@@ -215,7 +215,13 @@ type BucketWatcherManager struct {
 	// GetOrCreateWatcher refuse to proceed when this flag is set, so a
 	// watcher cannot be inserted into the cache after the manager has been
 	// torn down. Protected by mu.
-	stopping   bool
+	stopping bool
+	// newWatcher builds and starts a new BucketWatcher. The default wraps
+	// NewBucketWatcher + watcher.Start; tests override it to inject failures
+	// (e.g. a Start that exercises the OPA store write lock without needing
+	// a real NATS connection). Set in NewBucketWatcherManager and after
+	// Reconfigure; never reassigned at runtime, so no synchronization needed.
+	newWatcher func(bucketName string, opaStore storage.Store) (*BucketWatcher, error)
 	rootBucket string
 }
 
@@ -233,6 +239,16 @@ func NewBucketWatcherManager(natsClient *NATSClient, maxWatchers int, logger log
 		maxWatchers:     maxWatchers,
 		rootBucket:      config.RootBucket,
 	}
+	manager.newWatcher = func(bucketName string, opaStore storage.Store) (*BucketWatcher, error) {
+		w, err := NewBucketWatcher(bucketName, manager.natsClient, manager.logger, manager.dataTransformer, opaStore, false)
+		if err != nil {
+			return nil, err
+		}
+		if err := w.Start(); err != nil {
+			return nil, err
+		}
+		return w, nil
+	}
 	if err := manager.withCache(); err != nil {
 		return nil, fmt.Errorf("failed to create watcher cache: %w", err)
 	}
@@ -249,20 +265,15 @@ func (gwm *BucketWatcherManager) HasWatcher(bucketName string) bool {
 }
 
 func (gwm *BucketWatcherManager) withCache() error {
-	// Create LRU cache for watchers with eviction callback
-	cache, err := lru.NewWithEvict[string, *BucketWatcher](gwm.maxWatchers, gwm.onEviction)
+	// Plain LRU without an eviction callback — we MUST stop evicted watchers
+	// outside gwm.mu, so eviction is performed manually in GetOrCreateWatcher
+	// (see the comment on the slow path for the deadlock this avoids).
+	cache, err := lru.New[string, *BucketWatcher](gwm.maxWatchers)
 	if err != nil {
 		return fmt.Errorf("failed to create LRU cache: %w", err)
 	}
 	gwm.watchers = cache
 	return nil
-}
-
-func (gwm *BucketWatcherManager) onEviction(key string, value *BucketWatcher) {
-	if err := value.Stop(); err != nil {
-		gwm.logger.Error("Failed to stop evicted bucket watcher for %s: %v", key, err)
-	}
-	gwm.logger.Debug("Evicted bucket watcher for: %s", key)
 }
 
 func (gwm *BucketWatcherManager) CreateRootWatcher(opaStore storage.Store) (*BucketWatcher, error) {
@@ -343,34 +354,47 @@ func (gwm *BucketWatcherManager) GetOrCreateWatcher(bucketName string, opaStore 
 	}
 	gwm.mu.RUnlock()
 
-	// We are the unique creator for this bucket. Build and start.
-	watcher, err := NewBucketWatcher(bucketName, gwm.natsClient, gwm.logger, gwm.dataTransformer, opaStore, false)
+	// We are the unique creator for this bucket. Build and start via the
+	// newWatcher seam so tests can inject a Start that exercises the OPA
+	// store write lock without needing a real NATS connection.
+	watcher, err := gwm.newWatcher(bucketName, opaStore)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create bucket watcher for %s: %w", bucketName, err)
 	}
 
-	if err := watcher.Start(); err != nil {
-		return nil, fmt.Errorf("failed to start bucket watcher for %s: %w", bucketName, err)
-	}
-
-	// Insert into the LRU cache. By holding createMu we already know no
-	// other creator inserted a different watcher for this bucket, so the
-	// duplicate-create-Stop()-wipes-data race is impossible.
+	// Insert into the LRU cache. createMu is held for the entire slow path
+	// and Stop() takes createMu BEFORE setting gwm.stopping=true, so
+	// gwm.stopping cannot transition false→true here — no late stopping
+	// re-check needed. By holding createMu we also know no other creator
+	// inserted a different watcher for this bucket, so the duplicate-
+	// create-Stop()-wipes-data race is impossible.
+	//
+	// Eviction is performed MANUALLY rather than letting the LRU fire an
+	// onEviction callback under gwm.mu.Lock. An eviction callback would
+	// call BucketWatcher.Stop → cleanOPAStore → opaStore.Commit, which
+	// takes the inmem store's write lock and blocks on the parent Rego
+	// query's RLock — exactly the deadlock this PR is meant to fix, just
+	// shifted from Start to eviction. We therefore peek capacity and
+	// RemoveOldest under gwm.mu, drop the lock, then call Stop on the
+	// evicted watcher with no manager lock held.
+	var evictedWatcher *BucketWatcher
 	gwm.mu.Lock()
-	if gwm.stopping {
-		// Stop became true while we were starting; tear down what we built
-		// rather than leak it into a shutdown-in-progress manager.
-		gwm.mu.Unlock()
-		if stopErr := watcher.Stop(); stopErr != nil {
-			gwm.logger.Error("Failed to stop just-created watcher for %s during shutdown: %v", bucketName, stopErr)
+	if !gwm.watchers.Contains(bucketName) {
+		if gwm.watchers.Len() >= gwm.maxWatchers {
+			if _, v, ok := gwm.watchers.RemoveOldest(); ok {
+				evictedWatcher = v
+			}
 		}
-		return nil, fmt.Errorf("bucket watcher manager is stopping, abandoning watcher for %s", bucketName)
+		// Capacity is now guaranteed available, so this Add never evicts.
+		_ = gwm.watchers.Add(bucketName, watcher)
 	}
-	_, evicted := gwm.watchers.ContainsOrAdd(bucketName, watcher)
 	gwm.mu.Unlock()
 
-	if evicted {
+	if evictedWatcher != nil {
 		gwm.logger.Debug("Added new bucket watcher for %s, evicted LRU watcher", bucketName)
+		if stopErr := evictedWatcher.Stop(); stopErr != nil {
+			gwm.logger.Error("Failed to stop evicted bucket watcher: %v", stopErr)
+		}
 	} else {
 		gwm.logger.Debug("Added new bucket watcher for: %s", bucketName)
 	}
@@ -406,6 +430,9 @@ func (gwm *BucketWatcherManager) Stop() error {
 		}
 	}
 
+	// Purge clears the cache. Each cached watcher was already stopped above;
+	// because the LRU is created without an eviction callback, Purge does
+	// not invoke any side effects under the lock — it is just a map clear.
 	gwm.mu.Lock()
 	gwm.watchers.Purge()
 	gwm.mu.Unlock()
