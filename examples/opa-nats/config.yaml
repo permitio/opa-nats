@@ -1,9 +1,11 @@
 plugins:
   nats:
-    # Inside the docker-compose stack OPA reaches NATS via the docker network
-    # service name `nats`. If you run OPA outside docker (directly on the
-    # host), set this to nats://localhost:4222 instead.
-    server_url: "nats://nats:4222"
+    # Defaults to localhost so this example works out of the box for users
+    # running OPA directly on their host. The included docker-compose stack
+    # overrides this via cmd/opa-nats/docker-compose.test.override.yaml when
+    # OPA runs inside the compose network and needs to reach NATS via the
+    # docker service name `nats`.
+    server_url: "nats://localhost:4222"
     ttl: "10m"
     refresh_interval: "30s"
     max_reconnect_attempts: 10
