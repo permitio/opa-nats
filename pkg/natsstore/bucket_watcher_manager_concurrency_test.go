@@ -8,12 +8,51 @@ import (
 	"time"
 
 	lru "github.com/hashicorp/golang-lru/v2"
+	"github.com/nats-io/nats.go"
 	"github.com/open-policy-agent/opa/v1/logging"
 	"github.com/open-policy-agent/opa/v1/storage"
 	"github.com/open-policy-agent/opa/v1/storage/inmem"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// stubKeyWatcher is a minimal nats.KeyWatcher used to drive a real
+// BucketWatcher without a live NATS connection. Updates is a channel the
+// test controls (typically left silent so watchLoop blocks on the select),
+// and Stop optionally blocks on stopGate so a test can hold the watcher in
+// the middle of BucketWatcher.Stop() and observe lock interactions.
+type stubKeyWatcher struct {
+	updates  chan nats.KeyValueEntry
+	stopGate chan struct{}
+}
+
+func (s *stubKeyWatcher) Updates() <-chan nats.KeyValueEntry { return s.updates }
+func (s *stubKeyWatcher) Stop() error {
+	if s.stopGate != nil {
+		<-s.stopGate
+	}
+	return nil
+}
+func (s *stubKeyWatcher) Context() context.Context { return context.Background() }
+
+// newRealBucketWatcher wires a *BucketWatcher directly without going
+// through NewBucketWatcher (which would require a real *NATSClient).
+// Used by tests that exercise the watchLoop handshake or the manager's
+// eviction-Stop path.
+func newRealBucketWatcher(name string, store storage.Store, kw nats.KeyWatcher) *BucketWatcher {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &BucketWatcher{
+		bucketName:        name,
+		opaStore:          store,
+		logger:            logging.Get(),
+		ctx:               ctx,
+		cancel:            cancel,
+		watcher:           kw,
+		started:           true,
+		stopReq:           make(chan struct{}),
+		watcherLoopExited: make(chan struct{}),
+	}
+}
 
 // newTestManager builds a BucketWatcherManager with an LRU cache, no NATS
 // dependencies, and no eviction stops (so we can drive the cache directly
@@ -235,26 +274,31 @@ func TestGetOrCreateWatcher_DoesNotDeadlockOnReader(t *testing.T) {
 // still held — the same circular wait as the original bug, just
 // shifted from Start to eviction.
 //
-// We fill the cache to capacity, then call GetOrCreateWatcher for a
-// new bucket (which forces an eviction) while a tight HasWatcher loop
-// runs concurrently. If gwm.mu were held across the evicted watcher's
-// Stop, HasWatcher (which takes gwm.mu.RLock) would block; the test
-// asserts every HasWatcher call returns within 100ms.
-//
-// To make eviction visible and slow enough to race with HasWatcher,
-// newWatcher itself sleeps briefly (so the create holds createMu for
-// long enough that we can observe the lock interaction), and the
-// pre-populated cache entries are inert *BucketWatcher{} values whose
-// Stop short-circuits via !started — Stop is a no-op but the eviction
-// path still runs through gwm.watchers.RemoveOldest under gwm.mu and
-// then through evictedWatcher.Stop outside it.
+// To exercise the failure mode rather than rely on a no-op Stop (a
+// stub *BucketWatcher{} with started=false would short-circuit at
+// "if !gw.started"), the preloaded watcher is a real BucketWatcher
+// driven by a stub nats.KeyWatcher. The KeyWatcher's Stop blocks on
+// stopGate — which holds the entire BucketWatcher.Stop in flight at
+// the inner watcher.Stop() step. While that gate is held, the test
+// asserts HasWatcher (gwm.mu.RLock) remains responsive: if a future
+// regression moved evictedWatcher.Stop() back inside gwm.mu.Lock, the
+// HasWatcher loop would block on RLock and the test would fail.
 func TestGetOrCreateWatcher_DoesNotDeadlockOnEviction(t *testing.T) {
 	m := newTestManager(t, 1) // capacity=1 so any new bucket evicts the existing one
-	m.watchers.Add("preloaded", &BucketWatcher{bucketName: "preloaded"})
 
-	// Slow newWatcher gives the test a window to observe lock state.
+	// Preloaded watcher: a real BucketWatcher whose Stop is gated at the
+	// inner KeyWatcher.Stop step. We start its watchLoop so the
+	// watcherLoopStopSignal handshake works, otherwise Stop would block
+	// forever on the unbuffered receive.
+	stopGate := make(chan struct{})
+	preloaded := newRealBucketWatcher("preloaded", inmem.New(), &stubKeyWatcher{
+		updates:  make(chan nats.KeyValueEntry),
+		stopGate: stopGate,
+	})
+	go preloaded.watchLoop()
+	m.watchers.Add("preloaded", preloaded)
+
 	m.newWatcher = func(bucketName string, _ storage.Store) (*BucketWatcher, error) {
-		time.Sleep(50 * time.Millisecond)
 		return &BucketWatcher{bucketName: bucketName}, nil
 	}
 
@@ -264,8 +308,8 @@ func TestGetOrCreateWatcher_DoesNotDeadlockOnEviction(t *testing.T) {
 		created <- err
 	}()
 
-	// Concurrent HasWatcher must remain responsive throughout — proves
-	// gwm.mu is not held during the eviction's Stop call.
+	// While eviction's Stop is gated, HasWatcher must remain responsive —
+	// proves gwm.mu is not held during the eviction's Stop call.
 	hasStop := make(chan struct{})
 	hasDone := make(chan struct{})
 	go func() {
@@ -278,20 +322,33 @@ func TestGetOrCreateWatcher_DoesNotDeadlockOnEviction(t *testing.T) {
 				start := time.Now()
 				_ = m.HasWatcher("anything")
 				if d := time.Since(start); d > 100*time.Millisecond {
-					t.Errorf("HasWatcher took %s during eviction-in-flight; eviction is holding gwm.mu", d)
+					t.Errorf("HasWatcher took %s during eviction-in-flight Stop; gwm.mu is held during evicted Stop", d)
 					return
 				}
 			}
 		}
 	}()
 
+	// Sanity-check the gate is actually holding the eviction's Stop in
+	// flight: created must not return while stopGate is held.
+	select {
+	case <-created:
+		close(hasStop)
+		<-hasDone
+		t.Fatal("eviction completed before stopGate released — test setup wrong")
+	case <-time.After(150 * time.Millisecond):
+		// good — eviction is gated, HasWatcher loop has had time to assert
+	}
+
+	close(stopGate)
+
 	select {
 	case err := <-created:
 		require.NoError(t, err)
-	case <-time.After(5 * time.Second):
+	case <-time.After(2 * time.Second):
 		close(hasStop)
 		<-hasDone
-		t.Fatal("eviction-during-create did not complete within 5s — deadlock")
+		t.Fatal("eviction-during-create did not complete within 2s after gate release — deadlock")
 	}
 
 	close(hasStop)
@@ -302,6 +359,47 @@ func TestGetOrCreateWatcher_DoesNotDeadlockOnEviction(t *testing.T) {
 	assert.Equal(t, 1, m.watchers.Len(), "cache should contain exactly the newly-created watcher")
 	assert.True(t, m.HasWatcher("new-bucket"), "new bucket should be cached")
 	assert.False(t, m.HasWatcher("preloaded"), "preloaded watcher should have been evicted")
+}
+
+// TestBucketWatcher_StopExitsWatchLoop verifies the watcherLoopStopSignal
+// handshake actually terminates the watchLoop goroutine. Stop sends to a
+// 1-buffer channel, the loop receives and closes it, and Stop then reads
+// the closed channel as a "loop exited" confirmation. A regression that
+// breaks any side of that handshake would hang Stop forever in production
+// but every other test in this file uses a stub *BucketWatcher{} with
+// started=false where Stop short-circuits — so the handshake never runs.
+func TestBucketWatcher_StopExitsWatchLoop(t *testing.T) {
+	store := inmem.New()
+	// Updates channel never receives or closes, so watchLoop blocks in
+	// the select waiting for either an update or the stop signal.
+	stub := &stubKeyWatcher{updates: make(chan nats.KeyValueEntry)}
+	gw := newRealBucketWatcher("loop-exit", store, stub)
+
+	loopExited := make(chan struct{})
+	go func() {
+		defer close(loopExited)
+		gw.watchLoop()
+	}()
+
+	done := make(chan error, 1)
+	go func() { done <- gw.Stop() }()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("Stop did not return within 1s — watcherLoopStopSignal handshake is broken")
+	}
+
+	// Stop's channel-close handshake guarantees watchLoop executed its
+	// close+return path, but the goroutine's deferred teardown runs on a
+	// different goroutine — give it a generous deadline so a hang here is
+	// reported as a real handshake bug rather than as scheduling jitter.
+	select {
+	case <-loopExited:
+	case <-time.After(time.Second):
+		t.Fatal("watchLoop did not exit even after Stop returned — handshake corrupt")
+	}
 }
 
 // TestGetOrCreateWatcher_SerializesSameBucket asserts that N concurrent
@@ -354,9 +452,16 @@ func TestStop_DrainsInflightCreates(t *testing.T) {
 
 	// Block the create until the test releases the gate. Stop should not
 	// return until after the gate is released and the create completes.
+	// `started` signals that newWatcher has been entered — by the time we
+	// receive on it, the calling GetOrCreateWatcher has already acquired
+	// createMu, so Stop()'s subsequent createMu.Lock() is guaranteed to
+	// queue behind the in-flight create. (Replaces a previous time.Sleep
+	// that was racy under load/slow CI.)
 	gate := make(chan struct{})
+	started := make(chan struct{})
 	createReturned := make(chan struct{})
 	m.newWatcher = func(bucketName string, _ storage.Store) (*BucketWatcher, error) {
+		close(started)
 		<-gate
 		return &BucketWatcher{bucketName: bucketName}, nil
 	}
@@ -366,8 +471,8 @@ func TestStop_DrainsInflightCreates(t *testing.T) {
 		_, _ = m.GetOrCreateWatcher("inflight", inmem.New())
 	}()
 
-	// Give the create a moment to acquire createMu.
-	time.Sleep(50 * time.Millisecond)
+	// Wait for the create to be in flight under createMu.
+	<-started
 
 	stopReturned := make(chan struct{})
 	go func() {
