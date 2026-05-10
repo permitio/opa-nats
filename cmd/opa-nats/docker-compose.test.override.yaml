@@ -1,0 +1,24 @@
+# Override for TestIntegration (cmd/opa-nats/main_test.go).
+#
+#  - Suppresses host-port bindings on services we don't talk to from
+#    the test runner so we don't collide with whatever else may be
+#    using those ports on the host (in CI, the workflow's
+#    `services: nats:` already binds 4222). OPA's 8181 is the only port
+#    the test reaches, so it stays published.
+#  - Mounts ./config-compose.yaml in place of the example config.yaml so
+#    OPA points at NATS via the docker-compose service name `nats:4222`
+#    rather than the example's host-friendly `localhost:4222` default.
+#  - Adds --pprof to OPA so the test can grab a goroutine dump from
+#    /debug/pprof/goroutine?debug=2 if a request hangs.
+services:
+  nats:
+    ports: !reset []
+  nats-ui:
+    ports: !reset []
+  opa:
+    command: ["run", "--server", "--config-file=/config/config.yaml", "/policies", "--addr", "0.0.0.0:8181", "--pprof"]
+    volumes:
+      # Override the default ./config.yaml mount so OPA uses the in-compose
+      # config (server_url=nats://nats:4222) instead of the host-friendly
+      # default. Path is relative to docker-compose.yaml's directory.
+      - ./config-compose.yaml:/config/config.yaml

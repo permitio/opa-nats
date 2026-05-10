@@ -1,5 +1,10 @@
 plugins:
   nats:
+    # Defaults to localhost so this example works out of the box for users
+    # running OPA directly on their host. The included docker-compose stack
+    # overrides this via cmd/opa-nats/docker-compose.test.override.yaml when
+    # OPA runs inside the compose network and needs to reach NATS via the
+    # docker service name `nats`.
     server_url: "nats://localhost:4222"
     ttl: "10m"
     refresh_interval: "30s"
