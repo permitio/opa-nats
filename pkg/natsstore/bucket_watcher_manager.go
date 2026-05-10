@@ -13,19 +13,28 @@ import (
 )
 
 // BucketWatcher manages watching and caching for a specific bucket.
+//
+// Stop/watchLoop handshake:
+//   - stopReq is closed by Stop to broadcast "please exit" to watchLoop.
+//     Closing (rather than sending) is what makes the handshake race-free —
+//     a closed channel is observable by every receiver, whereas a single
+//     value sent on a buffered channel can be drained by either side first.
+//   - watcherLoopExited is closed by watchLoop in a defer once the loop
+//     returns, signaling Stop that the goroutine has actually exited.
 type BucketWatcher struct {
-	bucketName            string
-	watcher               nats.KeyWatcher
-	natsClient            *NATSClient
-	dataTransformer       *DataTransformer
-	opaStore              storage.Store // Reference to OPA store for data injection
-	logger                logging.Logger
-	ctx                   context.Context
-	cancel                context.CancelFunc
-	mu                    sync.RWMutex
-	started               bool
-	watcherLoopStopSignal chan struct{}
-	isRoot                bool
+	bucketName        string
+	watcher           nats.KeyWatcher
+	natsClient        *NATSClient
+	dataTransformer   *DataTransformer
+	opaStore          storage.Store // Reference to OPA store for data injection
+	logger            logging.Logger
+	ctx               context.Context
+	cancel            context.CancelFunc
+	mu                sync.RWMutex
+	started           bool
+	stopReq           chan struct{}
+	watcherLoopExited chan struct{}
+	isRoot            bool
 }
 
 // NewBucketWatcher creates a new bucket-specific watcher.
@@ -33,15 +42,16 @@ func NewBucketWatcher(bucketName string, natsClient *NATSClient, logger logging.
 	ctx, cancel := context.WithCancel(context.Background())
 
 	watcher := &BucketWatcher{
-		bucketName:            bucketName,
-		natsClient:            natsClient,
-		dataTransformer:       dataTransformer,
-		opaStore:              opaStore,
-		logger:                logger,
-		ctx:                   ctx,
-		cancel:                cancel,
-		isRoot:                isRoot,
-		watcherLoopStopSignal: make(chan struct{}, 1),
+		bucketName:        bucketName,
+		natsClient:        natsClient,
+		dataTransformer:   dataTransformer,
+		opaStore:          opaStore,
+		logger:            logger,
+		ctx:               ctx,
+		cancel:            cancel,
+		isRoot:            isRoot,
+		stopReq:           make(chan struct{}),
+		watcherLoopExited: make(chan struct{}),
 	}
 
 	return watcher, nil
@@ -112,6 +122,13 @@ func (gw *BucketWatcher) cleanOPAStore() error {
 }
 
 // Stop shuts down the bucket watcher.
+//
+// The handshake — close(stopReq) → watchLoop returns → defer
+// close(watcherLoopExited) → <-watcherLoopExited unblocks — is race-free
+// regardless of whether watchLoop has already parked in its select. A
+// previous version used a single buffered channel for both directions,
+// which deadlocked watchLoop when Stop's send completed before watchLoop
+// reached the select (Stop's own subsequent receive drained the value).
 func (gw *BucketWatcher) Stop() error {
 	gw.mu.Lock()
 	defer gw.mu.Unlock()
@@ -119,11 +136,9 @@ func (gw *BucketWatcher) Stop() error {
 		return nil
 	}
 
-	// the last thing we do in the stop is to cancel the context to ensure no leftover residues
-	gw.watcherLoopStopSignal <- struct{}{}
+	close(gw.stopReq)
+	<-gw.watcherLoopExited
 
-	// wait for the goroutine to finish by waiting for the channel to be closed
-	<-gw.watcherLoopStopSignal
 	if gw.watcher != nil {
 		if err := gw.watcher.Stop(); err != nil {
 			gw.logger.Error("Failed to stop watcher for bucket %s: %v", gw.bucketName, err)
@@ -141,14 +156,13 @@ func (gw *BucketWatcher) Stop() error {
 // watchLoop handles incoming changes for this bucket.
 func (gw *BucketWatcher) watchLoop() {
 	defer func() {
+		close(gw.watcherLoopExited)
 		gw.logger.Debug("Watch loop ended for bucket: %s", gw.bucketName)
 	}()
 
 	for {
 		select {
-		case <-gw.watcherLoopStopSignal:
-			// if we receive a message on the channel, we close it and return
-			close(gw.watcherLoopStopSignal)
+		case <-gw.stopReq:
 			return
 		case entry := <-gw.watcher.Updates():
 			if entry == nil {
