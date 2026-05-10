@@ -61,14 +61,23 @@ func TestIntegration(t *testing.T) {
 		t.Logf("Dumping diagnostics (%s):", reason)
 		// OPA goroutine dump first — most useful for diagnosing hung requests.
 		t.Logf("--- BEGIN OPA goroutine dump ---\n%s\n--- END OPA goroutine dump ---", fetchOPAGoroutineDump())
+		// Bound each docker invocation: if the daemon itself is wedged
+		// (rare, but seen in CI under OOM-kill aftermath) the cleanup
+		// would otherwise hang past the test framework's 10-min kill and
+		// no diagnostics would land. Match the 10s timeout already used
+		// by fetchOPAGoroutineDump.
+		runDocker := func(args []string) []byte {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			out, _ := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
+			return out
+		}
 		logsArgs := append([]string{}, composeArgs...)
 		logsArgs = append(logsArgs, "logs", "--no-color", "--tail", "200")
-		out, _ := exec.Command("docker", logsArgs...).CombinedOutput()
-		t.Logf("--- BEGIN compose logs ---\n%s\n--- END compose logs ---", string(out))
+		t.Logf("--- BEGIN compose logs ---\n%s\n--- END compose logs ---", string(runDocker(logsArgs)))
 		psArgs := append([]string{}, composeArgs...)
 		psArgs = append(psArgs, "ps", "-a")
-		ps, _ := exec.Command("docker", psArgs...).CombinedOutput()
-		t.Logf("--- compose ps ---\n%s", string(ps))
+		t.Logf("--- compose ps ---\n%s", string(runDocker(psArgs)))
 	}
 	t.Cleanup(func() {
 		_ = os.Chdir(examplesDir)
