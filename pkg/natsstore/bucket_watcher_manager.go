@@ -393,8 +393,9 @@ func (gwm *BucketWatcherManager) GetOrCreateWatcher(bucketName string, opaStore 
 	// and Stop() takes createMu BEFORE setting gwm.stopping=true, so
 	// gwm.stopping cannot transition false→true here — no late stopping
 	// re-check needed. By holding createMu we also know no other creator
-	// inserted a different watcher for this bucket, so the duplicate-
-	// create-Stop()-wipes-data race is impossible.
+	// inserted a watcher for this bucket between the double-check above
+	// and here, so we can Add unconditionally — the duplicate-create-
+	// Stop()-wipes-data race is impossible.
 	//
 	// Eviction is performed MANUALLY rather than letting the LRU fire an
 	// onEviction callback under gwm.mu.Lock. An eviction callback would
@@ -406,15 +407,13 @@ func (gwm *BucketWatcherManager) GetOrCreateWatcher(bucketName string, opaStore 
 	// evicted watcher with no manager lock held.
 	var evictedWatcher *BucketWatcher
 	gwm.mu.Lock()
-	if !gwm.watchers.Contains(bucketName) {
-		if gwm.watchers.Len() >= gwm.maxWatchers {
-			if _, v, ok := gwm.watchers.RemoveOldest(); ok {
-				evictedWatcher = v
-			}
+	if gwm.watchers.Len() >= gwm.maxWatchers {
+		if _, v, ok := gwm.watchers.RemoveOldest(); ok {
+			evictedWatcher = v
 		}
-		// Capacity is now guaranteed available, so this Add never evicts.
-		_ = gwm.watchers.Add(bucketName, watcher)
 	}
+	// Capacity is now guaranteed available, so this Add never evicts.
+	_ = gwm.watchers.Add(bucketName, watcher)
 	gwm.mu.Unlock()
 
 	if evictedWatcher != nil {
