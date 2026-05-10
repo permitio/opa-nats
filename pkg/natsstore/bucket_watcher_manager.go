@@ -277,15 +277,41 @@ func (gwm *BucketWatcherManager) withCache() error {
 	return nil
 }
 
+// CreateRootWatcher builds and starts the root-bucket watcher. The root
+// watcher lives outside the LRU cache (it must never be evicted) but uses
+// the same createMu/stopping flow as GetOrCreateWatcher so that:
+//   - Stop() drains any in-flight CreateRootWatcher (createMu acts as the
+//     synchronization point), and
+//   - a CreateRootWatcher started after Stop is refused, preventing a
+//     background watch loop from being attached to a torn-down manager.
+//
+// watcher.Start runs without gwm.mu held, for the same reason described
+// on GetOrCreateWatcher: Start ultimately takes the OPA inmem store's
+// write lock, and holding gwm.mu across that wait would deadlock with
+// any HasWatcher / GetOrCreateWatcher fast-path caller in the parent
+// Rego query.
 func (gwm *BucketWatcherManager) CreateRootWatcher(opaStore storage.Store) (*BucketWatcher, error) {
+	gwm.createMu.Lock()
+	defer gwm.createMu.Unlock()
+
+	gwm.mu.RLock()
+	stopping := gwm.stopping
+	gwm.mu.RUnlock()
+	if stopping {
+		return nil, fmt.Errorf("bucket watcher manager is stopping, refusing to create root watcher for %s", gwm.rootBucket)
+	}
+
 	watcher, err := NewBucketWatcher(gwm.rootBucket, gwm.natsClient, gwm.logger, gwm.dataTransformer, opaStore, true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create root bucket watcher: %w", err)
 	}
-	gwm.rootWatcher = watcher
 	if err := watcher.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start bucket watcher for %s: %w", gwm.rootBucket, err)
 	}
+
+	gwm.mu.Lock()
+	gwm.rootWatcher = watcher
+	gwm.mu.Unlock()
 	return watcher, nil
 }
 
@@ -417,7 +443,18 @@ func (gwm *BucketWatcherManager) Stop() error {
 	gwm.mu.Lock()
 	gwm.stopping = true
 	keys := gwm.watchers.Keys()
+	rootWatcher := gwm.rootWatcher
+	gwm.rootWatcher = nil
 	gwm.mu.Unlock()
+
+	// Stop the root watcher (if any) outside gwm.mu — its Stop calls
+	// cleanOPAStore which takes the OPA store's write lock, the very lock
+	// holding-pattern this manager is structured to avoid under gwm.mu.
+	if rootWatcher != nil {
+		if err := rootWatcher.Stop(); err != nil {
+			gwm.logger.Error("Failed to stop root bucket watcher: %v", err)
+		}
+	}
 
 	for _, bucket := range keys {
 		gwm.mu.RLock()
