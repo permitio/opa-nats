@@ -5,8 +5,8 @@
 #    using those ports on the host (in CI, the workflow's
 #    `services: nats:` already binds 4222). OPA's 8181 is the only port
 #    the test reaches, so it stays published.
-#  - Mounts test-config.yaml in place of the example config.yaml so OPA
-#    points at NATS via the docker-compose service name `nats:4222`
+#  - Mounts ./config-compose.yaml in place of the example config.yaml so
+#    OPA points at NATS via the docker-compose service name `nats:4222`
 #    rather than the example's host-friendly `localhost:4222` default.
 #  - Adds --pprof to OPA so the test can grab a goroutine dump from
 #    /debug/pprof/goroutine?debug=2 if a request hangs.

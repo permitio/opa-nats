@@ -219,8 +219,9 @@ type BucketWatcherManager struct {
 	// newWatcher builds and starts a new BucketWatcher. The default wraps
 	// NewBucketWatcher + watcher.Start; tests override it to inject failures
 	// (e.g. a Start that exercises the OPA store write lock without needing
-	// a real NATS connection). Set in NewBucketWatcherManager and after
-	// Reconfigure; never reassigned at runtime, so no synchronization needed.
+	// a real NATS connection). Set once in NewBucketWatcherManager; never
+	// reassigned at runtime (Plugin.Reconfigure replaces the entire manager
+	// rather than mutating it), so no synchronization needed.
 	newWatcher func(bucketName string, opaStore storage.Store) (*BucketWatcher, error)
 	rootBucket string
 }
