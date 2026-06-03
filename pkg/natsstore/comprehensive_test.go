@@ -19,68 +19,71 @@ func TestDataTransformer_NATSKeyToOPAPath_Comprehensive(t *testing.T) {
 	dt, err := NewDataTransformer(config, logger)
 	require.NoError(t, err)
 
+	// Single muxed bucket: the NATS key is the FULL muxed key "<tenant>.<rest...>".
+	// The tenant token is the first segment and becomes the bucket segment of the
+	// OPA path, so placement is identical to the old bucket-per-tenant layout
+	// (data.nats.kv.<tenant>.<rest>) without passing the bucket name out-of-band.
+	// In root mode the tenant token is stripped and the remainder mounts at data root.
 	tests := []struct {
 		name        string
-		natsKey     string
-		bucketName  string
+		fullKey     string
 		isRoot      bool
 		expected    storage.Path
 		expectError bool
 	}{
 		{
-			name:       "root bucket with simple key",
-			natsKey:    "users.123",
-			bucketName: "test-bucket",
-			isRoot:     true,
-			expected:   storage.Path{"users", "123"},
+			name:     "non-root: tenant becomes the kv segment",
+			fullKey:  "test-bucket.users.123",
+			isRoot:   false,
+			expected: storage.Path{"nats", "kv", "test-bucket", "users", "123"},
 		},
 		{
-			name:       "watched bucket with simple key",
-			natsKey:    "users.123",
-			bucketName: "test-bucket",
-			isRoot:     false,
-			expected:   storage.Path{"nats", "kv", "test-bucket", "users", "123"},
+			name:     "root: tenant token stripped, remainder at data root",
+			fullKey:  "test-bucket.users.123",
+			isRoot:   true,
+			expected: storage.Path{"users", "123"},
 		},
 		{
-			name:       "nested key with multiple dots",
-			natsKey:    "groups.org1.users.john.profile.settings",
-			bucketName: "permissions",
-			isRoot:     false,
-			expected:   storage.Path{"nats", "kv", "permissions", "groups", "org1", "users", "john", "profile", "settings"},
+			name:     "non-root: deeply nested key",
+			fullKey:  "permissions.groups.org1.users.john.profile.settings",
+			isRoot:   false,
+			expected: storage.Path{"nats", "kv", "permissions", "groups", "org1", "users", "john", "profile", "settings"},
 		},
 		{
-			name:        "empty key root bucket - should error",
-			natsKey:     "",
-			bucketName:  "test",
-			isRoot:      true,
-			expectError: true,
-		},
-		{
-			name:        "empty key watched bucket - should error",
-			natsKey:     "",
-			bucketName:  "test",
+			name:        "empty key errors (non-root)",
+			fullKey:     "",
 			isRoot:      false,
 			expectError: true,
 		},
 		{
-			name:       "single part key root bucket",
-			natsKey:    "config",
-			bucketName: "settings",
-			isRoot:     true,
-			expected:   storage.Path{"config"},
+			name:        "empty key errors (root)",
+			fullKey:     "",
+			isRoot:      true,
+			expectError: true,
 		},
 		{
-			name:       "single part key watched bucket",
-			natsKey:    "config",
-			bucketName: "settings",
-			isRoot:     false,
-			expected:   storage.Path{"nats", "kv", "settings", "config"},
+			name:     "non-root: single sub-key under tenant",
+			fullKey:  "settings.config",
+			isRoot:   false,
+			expected: storage.Path{"nats", "kv", "settings", "config"},
+		},
+		{
+			name:     "root: single sub-key under tenant",
+			fullKey:  "settings.config",
+			isRoot:   true,
+			expected: storage.Path{"config"},
+		},
+		{
+			name:        "root: tenant token only, nothing to mount - errors",
+			fullKey:     "settings",
+			isRoot:      true,
+			expectError: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			path, err := dt.NATSKeyToOPAPath(tt.natsKey, tt.bucketName, tt.isRoot)
+			path, err := dt.NATSKeyToOPAPath(tt.fullKey, tt.isRoot)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -90,6 +93,31 @@ func TestDataTransformer_NATSKeyToOPAPath_Comprehensive(t *testing.T) {
 			}
 		})
 	}
+}
+
+// buildTenantJSON builds a tenant-relative JSON document from muxed keys,
+// stripping the "<tenant>." prefix and excluding other tenants' keys.
+func TestBuildTenantJSON(t *testing.T) {
+	store := map[string][]byte{
+		"t1.members":      []byte(`["alice","bob"]`),
+		"t1.profile.name": []byte(`"acme"`),
+		"t2.secret":       []byte(`"must-not-leak"`),
+	}
+	// caller passes only the tenant's filtered keys, but the builder must also
+	// defend against a stray foreign key sneaking in.
+	keys := []string{"t1.members", "t1.profile.name", "t2.secret"}
+	get := func(k string) []byte { return store[k] }
+
+	raw := buildTenantJSON("t1", keys, get)
+	res := gjson.ParseBytes(raw)
+
+	assert.Equal(t, []interface{}{"alice", "bob"}, res.Get("members").Value())
+	assert.Equal(t, "acme", res.Get("profile.name").String())
+	// tenant prefix is stripped: tenant-qualified key must NOT appear
+	assert.False(t, res.Get("t1.members").Exists())
+	// other tenants are excluded entirely
+	assert.False(t, res.Get("secret").Exists())
+	assert.False(t, res.Get("t2.secret").Exists())
 }
 
 // Test NATSClient functions that don't require connection

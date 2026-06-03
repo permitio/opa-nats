@@ -17,7 +17,8 @@ func TestPluginFactory_Validate(t *testing.T) {
 	// Test with minimal config
 	minimalConfig := map[string]interface{}{
 		"server_url":  "nats://localhost:4222",
-		"root_bucket": "test_bucket",
+		"bucket":      "DATA",
+		"root_tenant": "test_bucket",
 	}
 
 	configBytes, err := json.Marshal(minimalConfig)
@@ -37,7 +38,7 @@ func TestPluginFactory_Validate(t *testing.T) {
 	config, ok := validatedConfig.(*Config)
 	assert.True(t, ok)
 	assert.Equal(t, "nats://localhost:4222", config.ServerURL)
-	assert.Equal(t, "test_bucket", config.RootBucket)
+	assert.Equal(t, "test_bucket", config.RootTenant)
 }
 
 func TestPluginFactory_New(t *testing.T) {
@@ -45,7 +46,7 @@ func TestPluginFactory_New(t *testing.T) {
 
 	config := DefaultConfig()
 	config.ServerURL = "nats://localhost:4222"
-	config.RootBucket = "test_bucket"
+	config.RootTenant = "test_bucket"
 
 	// Create a minimal manager for testing
 	manager := &plugins.Manager{
@@ -73,17 +74,25 @@ func TestPlugin_ConfigValidation(t *testing.T) {
 		expectError bool
 	}{
 		{
-			name: "valid minimal config with root bucket",
+			name: "valid minimal config with root tenant",
 			config: map[string]interface{}{
 				"server_url":  "nats://localhost:4222",
-				"root_bucket": "test_bucket",
+				"bucket":      "DATA",
+				"root_tenant": "test_tenant",
 			},
 			expectError: false,
 		},
 		{
 			name: "missing server_url",
 			config: map[string]interface{}{
-				"root_bucket": "test_bucket",
+				"bucket": "DATA",
+			},
+			expectError: true,
+		},
+		{
+			name: "missing bucket",
+			config: map[string]interface{}{
+				"server_url": "nats://localhost:4222",
 			},
 			expectError: true,
 		},
@@ -91,7 +100,7 @@ func TestPlugin_ConfigValidation(t *testing.T) {
 			name: "valid config with max_bucket_watchers",
 			config: map[string]interface{}{
 				"server_url":          "nats://localhost:4222",
-				"root_bucket":         "test_bucket",
+				"bucket":              "DATA",
 				"max_bucket_watchers": 5,
 			},
 			expectError: false,
@@ -120,7 +129,7 @@ func TestPlugin_DataInjectionArchitecture(t *testing.T) {
 	// Create a minimal config for data injection testing
 	config := DefaultConfig()
 	config.ServerURL = "nats://localhost:4222"
-	config.RootBucket = "test_bucket"
+	config.RootTenant = "test_bucket"
 
 	// Note: Since we can't test actual NATS connectivity without a NATS server,
 	// this test focuses on the plugin architecture and configuration validation
@@ -158,7 +167,7 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, 10, config.MaxBucketsWatchers)
 	assert.NotZero(t, config.TTL)
 	assert.NotZero(t, config.RefreshInterval)
-	assert.Equal(t, "", config.RootBucket)
+	assert.Equal(t, "", config.RootTenant)
 }
 
 // Note: Integration tests with actual NATS server would go in a separate file

@@ -164,6 +164,7 @@ func TestPluginFactory_Validate_EdgeCases(t *testing.T) {
 			name: "valid minimal config",
 			configData: map[string]interface{}{
 				"server_url": "nats://localhost:4222",
+				"bucket":     "DATA",
 			},
 			expectError: false,
 		},
@@ -189,7 +190,8 @@ func TestPluginFactory_Validate_EdgeCases(t *testing.T) {
 				"max_reconnect_attempts": 5,
 				"reconnect_wait":         "1s",
 				"max_bucket_watchers":    20,
-				"root_bucket":            "test-root",
+				"bucket":                 "DATA",
+				"root_tenant":            "test-root",
 				"username":               "testuser",
 				"password":               "testpass",
 			},

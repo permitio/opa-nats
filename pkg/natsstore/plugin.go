@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -61,7 +62,7 @@ func (f *PluginFactory) watchBucketBuiltin(bctx rego.BuiltinContext, inputTerm *
 	}
 
 	// Bucket not watched yet - load data into cache and start watching
-	bucketGjson, err := f.loadBucketAsGJSON(bucketName)
+	bucketGjson, err := f.loadTenantAsGJSON(bucketName)
 	if err != nil {
 		if errors.Is(err, nats.ErrBucketNotFound) {
 			return ast.BooleanTerm(false), nil
@@ -115,7 +116,7 @@ func (f *PluginFactory) getDataBuiltin(bctx rego.BuiltinContext, bucketTerm *ast
 	// Cache miss - load directly from NATS with warning
 	f.logger.Warn("Warning: Cache miss for bucket %s, key %s. Loading directly from NATS.\n", bucketName, dotNotationKey)
 
-	bucketGjson, err := f.loadBucketAsGJSON(bucketName)
+	bucketGjson, err := f.loadTenantAsGJSON(bucketName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load bucket data: %w", err)
 	}
@@ -133,38 +134,54 @@ func (f *PluginFactory) getDataBuiltin(bctx rego.BuiltinContext, bucketTerm *ast
 	return ast.NullTerm(), nil
 }
 
-func (f *PluginFactory) loadBucketAsGJSON(bucketName string) (*gjson.Result, error) {
+// buildTenantJSON builds a tenant-relative JSON document from muxed keys.
+// Each key is "<tenant>.<sub...>"; the "<tenant>." prefix is stripped so the
+// resulting tree is tenant-relative (e.g. "t1.members" -> "members"). Keys
+// outside the tenant's subtree are skipped. get returns the raw JSON value
+// bytes for a full key.
+func buildTenantJSON(tenant string, keys []string, get func(key string) []byte) []byte {
+	prefix := tenant + "."
+	jsonBytes := []byte("{}")
+	for _, k := range keys {
+		sub, ok := strings.CutPrefix(k, prefix)
+		if !ok || sub == "" {
+			continue // not this tenant's key, or the bare tenant token
+		}
+		jsonBytes, _ = sjson.SetRawBytes(jsonBytes, sub, get(k))
+	}
+	return jsonBytes
+}
+
+// loadTenantAsGJSON builds a tenant-relative gjson document by reading ONLY the
+// tenant's slice of the muxed bucket (prefix-filtered), with the "<tenant>."
+// prefix stripped so callers address keys tenant-relatively.
+func (f *PluginFactory) loadTenantAsGJSON(tenant string) (*gjson.Result, error) {
 	bdm := f.getBucketDataManager()
 	if bdm == nil {
 		return nil, fmt.Errorf("bucket data manager not available")
 	}
 
-	// Get the bucket
-	kv, err := bdm.natsClient.getBucket(bucketName)
+	// List ONLY this tenant's keys (filtered watch) — never enumerate the bucket.
+	keys, err := bdm.natsClient.tenantKeys(tenant)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get bucket %s: %w", bucketName, err)
+		return nil, fmt.Errorf("failed to list keys for tenant %s: %w", tenant, err)
+	}
+	if len(keys) == 0 {
+		return &gjson.Result{Type: gjson.Null}, nil
 	}
 
-	// List all keys in the bucket
-	keys, err := kv.Keys()
+	kv, err := bdm.natsClient.getBucket()
 	if err != nil {
-		// Handle empty bucket case
-		if err.Error() == "nats: no keys found" {
-			return &gjson.Result{Type: gjson.Null}, nil
-		}
-		return nil, fmt.Errorf("failed to list keys in bucket %s: %w", bucketName, err)
+		return nil, fmt.Errorf("failed to get bucket: %w", err)
 	}
 
-	// Build JSON using sjson
-	jsonBytes := []byte("{}")
-	for _, key := range keys {
+	jsonBytes := buildTenantJSON(tenant, keys, func(key string) []byte {
 		entry, err := kv.Get(key)
 		if err != nil {
-			continue // Skip failed keys
+			return []byte("null") // skip failed keys
 		}
-
-		jsonBytes, _ = sjson.SetRawBytes(jsonBytes, key, entry.Value())
-	}
+		return entry.Value()
+	})
 
 	gjsonResult := gjson.ParseBytes(jsonBytes)
 	return &gjsonResult, nil
@@ -345,9 +362,9 @@ func (p *Plugin) Start(ctx context.Context) error {
 	}
 
 	// If we have a root bucket configured, load it immediately
-	if p.config.RootBucket != "" {
-		p.logger.Info("Loading root bucket: %s", p.config.RootBucket)
-		if err := p.bucketDataManager.EnsureBucketLoaded(ctx, p.config.RootBucket, p.manager.Store, true); err != nil {
+	if p.config.RootTenant != "" {
+		p.logger.Info("Loading root tenant: %s", p.config.RootTenant)
+		if err := p.bucketDataManager.EnsureBucketLoaded(ctx, p.config.RootTenant, p.manager.Store, true); err != nil {
 			return err
 		}
 	}
