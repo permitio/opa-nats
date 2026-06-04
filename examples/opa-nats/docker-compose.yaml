@@ -121,10 +121,12 @@ services:
     ports:
       - "8181:8181"
     volumes:
-      - ./config.yaml:/config/config.yaml
+      # In-compose OPA must reach NATS via the service name, so mount the
+      # compose config (server_url=nats://nats:4222), NOT config.yaml's
+      # host-friendly localhost default — otherwise `localhost:4222` resolves to
+      # the OPA container itself and the plugin can't reach NATS.
+      - ./config-compose.yaml:/config/config.yaml
       - ./rego:/policies
-    environment:
-      - NATS_URL=nats://nats:4222
     networks:
       - nats-net
 
