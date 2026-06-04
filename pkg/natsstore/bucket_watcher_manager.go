@@ -66,20 +66,27 @@ func (gw *BucketWatcher) Start() error {
 		return nil
 	}
 
-	// Get or create the bucket for this bucket
-	kv, err := gw.natsClient.getBucket(gw.bucketName)
-	if err != nil {
-		return fmt.Errorf("failed to get bucket %s: %w", gw.bucketName, err)
-	}
-	if err := gw.dataTransformer.LoadBucketDataBulk(gw.ctx, gw.bucketName, gw.natsClient, gw.opaStore, gw.isRoot); err != nil {
-		return fmt.Errorf("failed to load bucket data for %s: %w", gw.bucketName, err)
+	// Reject unsafe tenant tokens before they become a NATS subject filter.
+	if err := validateTenant(gw.bucketName); err != nil {
+		return err
 	}
 
-	// Create watcher for all keys in this bucket
-	watchPattern := ">" // Watch all keys in this bucket
+	// Open the single muxed bucket (handle is cached).
+	kv, err := gw.natsClient.getBucket()
+	if err != nil {
+		return fmt.Errorf("failed to get bucket: %w", err)
+	}
+	if err := gw.dataTransformer.LoadBucketDataBulk(gw.ctx, gw.bucketName, gw.natsClient, gw.opaStore, gw.isRoot); err != nil {
+		return fmt.Errorf("failed to load data for tenant %s: %w", gw.bucketName, err)
+	}
+
+	// Watch ONLY this tenant's slice. gw.bucketName is the tenant token; the
+	// single-filter "<tenant>.>" maps to the scopeable extended consumer form
+	// (one ordered consumer per watched tenant), never the whole bucket.
+	watchPattern := gw.bucketName + ".>"
 	watcher, err := kv.Watch(watchPattern, nats.Context(gw.ctx))
 	if err != nil {
-		return fmt.Errorf("failed to create watcher for bucket %s: %w", gw.bucketName, err)
+		return fmt.Errorf("failed to create watcher for tenant %s: %w", gw.bucketName, err)
 	}
 
 	gw.watcher = watcher
@@ -243,7 +250,7 @@ type BucketWatcherManager struct {
 // NewBucketWatcherManager creates a new bucket watcher manager.
 func NewBucketWatcherManager(natsClient *NATSClient, maxWatchers int, logger logging.Logger, config *Config) (*BucketWatcherManager, error) {
 	// Create data transformer
-	dataTransformer, err := NewDataTransformer(config, logger)
+	dataTransformer, err := NewDataTransformer(logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create data transformer: %w", err)
 	}
@@ -252,7 +259,7 @@ func NewBucketWatcherManager(natsClient *NATSClient, maxWatchers int, logger log
 		dataTransformer: dataTransformer,
 		logger:          logger,
 		maxWatchers:     maxWatchers,
-		rootBucket:      config.RootBucket,
+		rootBucket:      config.RootTenant,
 	}
 	manager.newWatcher = func(bucketName string, opaStore storage.Store) (*BucketWatcher, error) {
 		w, err := NewBucketWatcher(bucketName, manager.natsClient, manager.logger, manager.dataTransformer, opaStore, false)

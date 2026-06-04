@@ -6,12 +6,13 @@ plugins:
     # OPA runs inside the compose network and needs to reach NATS via the
     # docker service name `nats`.
     server_url: "nats://localhost:4222"
+    bucket: "POLICY_DATA"
     ttl: "10m"
     refresh_interval: "30s"
     max_reconnect_attempts: 10
     reconnect_wait: "2s"
     max_bucket_watchers: 1
-    root_bucket: "permit-groups-default"
+    root_tenant: "permit-groups-default"
 
 services:
   authz:

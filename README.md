@@ -41,12 +41,14 @@ The plugin can be configured through OPA's configuration system. Here's an examp
 plugins:
   nats:
     server_url: "nats://localhost:4222"
+    bucket: "POLICY_DATA"   # REQUIRED: the single muxed K/V bucket holding every tenant
+                     # as keys "<tenant>.<key...>"
     ttl: "10m"
     refresh_interval: "30s"
     max_reconnect_attempts: 10
     reconnect_wait: "2s"
-    max_bucket_watchers: 10
-    root_bucket: ""  # Optional - leave empty for multi-bucket mode
+    max_bucket_watchers: 10   # LRU cap on concurrent per-tenant watchers
+    root_tenant: ""  # Optional - a tenant whose subtree mounts at the OPA data root
 
     # Authentication (choose one)
     credentials: "/path/to/nats.creds"
@@ -72,12 +74,13 @@ services:
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `server_url` | string | `"nats://localhost:4222"` | NATS server URL |
+| `bucket` | string | **(required)** | The single muxed K/V bucket name (keys `<tenant>.<key>`). Mandatory — no default; must match the producer's bucket. |
 | `ttl` | duration | `"10m"` | TTL for cache entries |
 | `refresh_interval` | duration | `"30s"` | How often to refresh cache from NATS |
 | `max_reconnect_attempts` | int | `10` | Maximum reconnection attempts |
 | `reconnect_wait` | duration | `"2s"` | Wait time between reconnection attempts |
 | `max_bucket_watchers` | int | `10` | Maximum number of bucket watchers in LRU cache |
-| `root_bucket` | string | `""` | Root bucket name for default data (optional) |
+| `root_tenant` | string | `""` | A tenant whose subtree mounts at the OPA data root instead of under `data.nats.kv.<tenant>` (optional) |
 | `credentials` | string | `""` | Path to NATS credentials file |
 | `token` | string | `""` | NATS token for authentication |
 | `username` | string | `""` | NATS username |
@@ -89,14 +92,21 @@ services:
 
 ## Built-in Functions
 
-The plugin provides custom Rego built-in functions for interacting with NATS K/V:
+The plugin provides custom Rego built-in functions for interacting with NATS K/V.
 
-### `nats.kv.watch_bucket(bucket_name)`
+> **Single muxed bucket model.** All tenants live in one K/V bucket (`bucket` in
+> config), keyed as `<tenant>.<key...>`. The first argument to both builtins is
+> the **tenant id** — the plugin reads only that tenant's slice (a prefix-filtered
+> watch), never the whole bucket. The data lands at `data.nats.kv.<tenant>.<...>`,
+> the same place as before, so policies are unchanged.
 
-Watches a NATS K/V bucket and returns all its data. This function automatically manages bucket watchers with LRU caching.
+### `nats.kv.watch_bucket(tenant_id)`
+
+Watches a single tenant's slice of the muxed bucket and returns its data. Watchers
+are managed with LRU caching (one ordered consumer per watched tenant).
 
 ```rego
-# Watch a specific bucket
+# Watch one tenant
 group_data := nats.kv.watch_bucket("550e8400-e29b-41d4-a716-446655440000")
 
 # Access nested data
@@ -104,13 +114,13 @@ members := group_data.members
 permissions := group_data.permissions
 ```
 
-### `nats.kv.get_data(bucket_name, key)`
+### `nats.kv.get_data(tenant_id, key)`
 
-Retrieves a specific key from a NATS K/V bucket.
+Retrieves a specific key from a tenant's slice (key is tenant-relative).
 
 ```rego
-# Get specific data from a bucket
-user_data := nats.kv.get_data("users", "123e4567-e89b-12d3-a456-426614174000")
+# Get specific data for a tenant
+user_data := nats.kv.get_data("550e8400-e29b-41d4-a716-446655440000", "members")
 ```
 
 ## Examples
@@ -276,8 +286,19 @@ accounts: {
     jetstream: enabled
     users: [
       {user: "opa", pass: "secret", permissions: {
-        subscribe: ["$JS.API.>", "$KV.>"]
-        publish: ["$JS.API.>", "$KV.>"]
+        # Scope to the single muxed bucket (POLICY_DATA). The plugin is a multi-tenant
+        # cloud reader living in the shared account, so it sees all tenants;
+        # narrow further per-deployment if desired.
+        #
+        # Caveats:
+        #  - `$JS.API.>` is account-wide JetStream API access (manage/observe every
+        #    stream and KV bucket in this account). For genuine least privilege,
+        #    scope it to this bucket's API subjects instead of granting `>`.
+        #  - The bucket name must stay in lockstep with the plugin's `bucket`
+        #    config: if you change `bucket`, change `$KV.<bucket>.>` here too, or
+        #    the watch is silently denied.
+        subscribe: ["$JS.API.>", "$KV.POLICY_DATA.>"]
+        publish: ["$JS.API.>", "$KV.POLICY_DATA.>"]
       }}
     ]
   }

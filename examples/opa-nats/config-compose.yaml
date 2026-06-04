@@ -4,12 +4,13 @@
 plugins:
   nats:
     server_url: "nats://nats:4222"
+    bucket: "POLICY_DATA"
     ttl: "10m"
     refresh_interval: "30s"
     max_reconnect_attempts: 10
     reconnect_wait: "2s"
     max_bucket_watchers: 1
-    root_bucket: "permit-groups-default"
+    root_tenant: "permit-groups-default"
 
 services:
   authz:

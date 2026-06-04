@@ -11,43 +11,45 @@ import (
 	"github.com/open-policy-agent/opa/v1/storage"
 )
 
-// DataTransformer handles conversion between NATS keys and OPA store paths
+// DataTransformer handles conversion between NATS keys and OPA store paths.
+// Root-vs-tenant placement is decided per call by NATSKeyToOPAPath's isRoot
+// argument, so the transformer holds no tenant/bucket state.
 type DataTransformer struct {
-	rootBucket string
-	logger     logging.Logger
+	logger logging.Logger
 }
 
 // NewDataTransformer creates a new data transformer
-func NewDataTransformer(config *Config, logger logging.Logger) (*DataTransformer, error) {
-	dt := &DataTransformer{
-		rootBucket: config.RootBucket,
-		logger:     logger,
-	}
-
-	return dt, nil
+func NewDataTransformer(logger logging.Logger) (*DataTransformer, error) {
+	return &DataTransformer{logger: logger}, nil
 }
 
-// NATSKeyToOPAPath converts a NATS key to an OPA storage path
-// For example: "users.alice.profile" -> ["data", "users", "alice", "profile"]
-// If isRoot=true, path is /nats/kv/{keyParts...}
-// If isRoot=false, path is /nats/kv/{bucketName}/{keyParts...}
-func (dt *DataTransformer) NATSKeyToOPAPath(natsKey string, bucketName string, isRoot bool) (storage.Path, error) {
-	if natsKey == "" {
+// NATSKeyToOPAPath converts a full muxed NATS key into an OPA storage path.
+//
+// With a single muxed bucket, a key is "<tenant>.<rest...>" and the tenant token
+// is the leading segment. It maps so that placement is identical to the old
+// bucket-per-tenant layout, without passing the tenant out-of-band:
+//   - non-root: "t1.users.123" -> ["nats","kv","t1","users","123"]   (data.nats.kv.t1.users.123)
+//   - root:     "t1.users.123" -> ["users","123"]                    (tenant stripped, mounted at data root)
+func (dt *DataTransformer) NATSKeyToOPAPath(fullKey string, isRoot bool) (storage.Path, error) {
+	if fullKey == "" {
 		return nil, fmt.Errorf("empty NATS key")
 	}
 
-	// Split the NATS key by dots
-	keyParts := strings.Split(natsKey, ".")
+	// Split the muxed key by dots: keyParts[0] is the tenant token.
+	keyParts := strings.Split(fullKey, ".")
 
-	// Create OPA path: ["data", "bucketKey", ...keyParts]
-	path := make(storage.Path, 0, len(keyParts)+2)
-	// Add bucket name to path only if this is NOT root bucket data
-	if !isRoot {
-		path = append(path, "nats", "kv", bucketName)
+	if isRoot {
+		// Strip the tenant token; the remainder mounts at the data root.
+		if len(keyParts) < 2 {
+			return nil, fmt.Errorf("root key %q has no sub-key beyond the tenant token", fullKey)
+		}
+		return storage.Path(keyParts[1:]), nil
 	}
 
+	// Non-root: ["nats","kv", <tenant>, ...rest]
+	path := make(storage.Path, 0, len(keyParts)+2)
+	path = append(path, "nats", "kv")
 	path = append(path, keyParts...)
-
 	return path, nil
 }
 
@@ -62,30 +64,31 @@ func (dt *DataTransformer) LoadBucketDataBulk(ctx context.Context, bucketName st
 		}
 	}()
 
-	// Get the bucket
-	kv, err := natsClient.getBucket(bucketName)
+	// Open the single muxed bucket (handle is cached) for per-key Get below.
+	kv, err := natsClient.getBucket()
 	if err != nil {
-		return fmt.Errorf("failed to get bucket %s: %w", bucketName, err)
+		return fmt.Errorf("failed to get bucket: %w", err)
 	}
 
-	// List all keys in the bucket
-	dt.logger.Debug("Getting keys from bucket %s", bucketName)
-	keys, err := kv.Keys()
+	// List ONLY this tenant's keys via a prefix-filtered watch — never enumerate
+	// the whole muxed bucket. bucketName is the tenant token. Keys are full
+	// muxed keys ("<tenant>.<rest>").
+	dt.logger.Debug("Getting keys for tenant %s", bucketName)
+	keys, err := natsClient.tenantKeys(ctx, bucketName)
 	if err != nil {
-		// Handle the case where bucket is empty (NATS returns "no keys found" error)
-		if err.Error() == "nats: no keys found" {
-			dt.logger.Debug("Bucket %s is empty, no keys to load", bucketName)
-			return nil
-		}
-		dt.logger.Error("Failed to list keys in bucket %s: %v", bucketName, err)
-		return fmt.Errorf("failed to list keys in bucket %s: %w", bucketName, err)
+		dt.logger.Error("Failed to list keys for tenant %s: %v", bucketName, err)
+		return fmt.Errorf("failed to list keys for tenant %s: %w", bucketName, err)
 	}
-	dt.logger.Debug("Found %d keys in bucket %s", len(keys), bucketName)
+	if len(keys) == 0 {
+		dt.logger.Debug("Tenant %s has no keys to load", bucketName)
+		return nil
+	}
+	dt.logger.Debug("Found %d keys for tenant %s", len(keys), bucketName)
 	// Convert NATS keys to OPA base paths for the transaction
 	basePaths := make([]string, 0)
 	basePathSet := make(map[string]bool)
 	for _, natsKey := range keys {
-		opaPath, err := dt.NATSKeyToOPAPath(natsKey, bucketName, isRoot)
+		opaPath, err := dt.NATSKeyToOPAPath(natsKey, isRoot)
 		if err != nil {
 			dt.logger.Warn("Failed to convert NATS key to OPA path: %v", err)
 			continue
@@ -131,7 +134,7 @@ func (dt *DataTransformer) LoadBucketDataBulk(ctx context.Context, bucketName st
 
 	// Load each key from NATS and store in OPA
 	for _, natsKey := range keys {
-		if err := dt.loadSingleKey(ctx, natsKey, bucketName, kv, opaStore, txn, isRoot); err != nil {
+		if err := dt.loadSingleKey(ctx, natsKey, kv, opaStore, txn, isRoot); err != nil {
 			dt.logger.Warn("Failed to load key '%s' for bucket '%s': %v", natsKey, bucketName, err)
 		} else {
 			successfulKeys++
@@ -283,7 +286,7 @@ func (dt *DataTransformer) createNestedStructure(ctx context.Context, fullPath s
 }
 
 // loadSingleKey loads a single key from NATS KV and stores it in OPA store
-func (dt *DataTransformer) loadSingleKey(ctx context.Context, natsKey string, bucketName string, kv nats.KeyValue, opaStore storage.Store, txn storage.Transaction, isRoot bool) error {
+func (dt *DataTransformer) loadSingleKey(ctx context.Context, natsKey string, kv nats.KeyValue, opaStore storage.Store, txn storage.Transaction, isRoot bool) error {
 	// Get value from NATS
 	entry, err := kv.Get(natsKey)
 	if err != nil {
@@ -298,7 +301,7 @@ func (dt *DataTransformer) loadSingleKey(ctx context.Context, natsKey string, bu
 	}
 
 	// Convert NATS key to OPA path
-	opaPath, err := dt.NATSKeyToOPAPath(natsKey, bucketName, isRoot)
+	opaPath, err := dt.NATSKeyToOPAPath(natsKey, isRoot)
 	if err != nil {
 		return fmt.Errorf("failed to convert NATS key to OPA path: %w", err)
 	}
@@ -314,7 +317,7 @@ func (dt *DataTransformer) loadSingleKey(ctx context.Context, natsKey string, bu
 // InjectDataToOPAStore converts NATS data to OPA store writes (for watch updates)
 func (dt *DataTransformer) InjectDataToOPAStore(ctx context.Context, opaStore storage.Store, bucketName string, natsKey string, value any, isRoot bool) error {
 	// Convert NATS key to OPA path
-	opaPath, err := dt.NATSKeyToOPAPath(natsKey, bucketName, isRoot)
+	opaPath, err := dt.NATSKeyToOPAPath(natsKey, isRoot)
 	if err != nil {
 		return fmt.Errorf("failed to convert NATS key to OPA path: %w", err)
 	}

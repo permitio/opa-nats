@@ -59,67 +59,50 @@ services:
       - NATS_URL=nats://nats:4222
     command: >
       /bin/sh -c "
-        echo 'Setting up NATS K/V buckets for UUID-based groups (each group UUID = separate bucket)...';
+        echo 'Setting up the single muxed NATS K/V bucket POLICY_DATA (keys are <tenant>.<key>)...';
 
-        # Create individual buckets for each group UUID
-        echo 'Creating group UUID buckets...';
-        nats kv add 550e8400-e29b-41d4-a716-446655440000 --replicas=1 --history=10 --ttl=12h;
-        nats kv add 660e8400-e29b-41d4-a716-446655440001 --replicas=1 --history=10 --ttl=12h;
-        nats kv add 770e8400-e29b-41d4-a716-446655440002 --replicas=1 --history=10 --ttl=12h;
+        # ONE bucket holds every tenant; the group UUID is the leading key token.
+        nats kv add POLICY_DATA --replicas=1 --history=10 --ttl=12h;
+        echo 'Bucket POLICY_DATA created successfully';
 
-        # Create default bucket for non-group data (users)
-        nats kv add permit-groups-default --replicas=1 --history=10 --ttl=12h;
+        echo 'Populating Administrators group (tenant 550e8400-e29b-41d4-a716-446655440000)...';
+        nats kv put POLICY_DATA 550e8400-e29b-41d4-a716-446655440000.metadata '{\"id\":\"550e8400-e29b-41d4-a716-446655440000\",\"name\":\"Administrators\",\"description\":\"System administrators group\",\"created_at\":\"2024-01-15T10:00:00Z\"}';
+        nats kv put POLICY_DATA 550e8400-e29b-41d4-a716-446655440000.members.123e4567-e89b-12d3-a456-426614174000 '{\"user_id\":\"123e4567-e89b-12d3-a456-426614174000\",\"joined_at\":\"2024-01-15T10:05:00Z\",\"role\":\"admin\"}';
+        nats kv put POLICY_DATA 550e8400-e29b-41d4-a716-446655440000.members.234e5678-e89b-12d3-a456-426614174001 '{\"user_id\":\"234e5678-e89b-12d3-a456-426614174001\",\"joined_at\":\"2024-01-15T10:10:00Z\",\"role\":\"member\"}';
+        nats kv put POLICY_DATA 550e8400-e29b-41d4-a716-446655440000.permissions.perm-admin-api '{\"id\":\"perm-admin-api\",\"resource\":\"api\",\"action\":\"admin\",\"effect\":\"allow\"}';
+        nats kv put POLICY_DATA 550e8400-e29b-41d4-a716-446655440000.permissions.perm-admin-users '{\"id\":\"perm-admin-users\",\"resource\":\"users\",\"action\":\"manage\",\"effect\":\"allow\"}';
 
-        echo 'All buckets created successfully';
+        echo 'Populating Developers group (tenant 660e8400-e29b-41d4-a716-446655440001)...';
+        nats kv put POLICY_DATA 660e8400-e29b-41d4-a716-446655440001.metadata '{\"id\":\"660e8400-e29b-41d4-a716-446655440001\",\"name\":\"Developers\",\"description\":\"Development team group\",\"created_at\":\"2024-01-15T10:30:00Z\"}';
+        nats kv put POLICY_DATA 660e8400-e29b-41d4-a716-446655440001.members.345e6789-e89b-12d3-a456-426614174002 '{\"user_id\":\"345e6789-e89b-12d3-a456-426614174002\",\"joined_at\":\"2024-01-15T10:35:00Z\",\"role\":\"lead\"}';
+        nats kv put POLICY_DATA 660e8400-e29b-41d4-a716-446655440001.members.234e5678-e89b-12d3-a456-426614174001 '{\"user_id\":\"234e5678-e89b-12d3-a456-426614174001\",\"joined_at\":\"2024-01-15T10:40:00Z\",\"role\":\"member\"}';
+        nats kv put POLICY_DATA 660e8400-e29b-41d4-a716-446655440001.permissions.perm-dev-code '{\"id\":\"perm-dev-code\",\"resource\":\"code\",\"action\":\"write\",\"effect\":\"allow\"}';
+        nats kv put POLICY_DATA 660e8400-e29b-41d4-a716-446655440001.permissions.perm-dev-deploy '{\"id\":\"perm-dev-deploy\",\"resource\":\"deployment\",\"action\":\"deploy\",\"effect\":\"allow\"}';
 
-        echo 'Populating Administrators group (bucket: 550e8400-e29b-41d4-a716-446655440000)...';
-        # In this bucket, store data without the groups.{uuid} prefix since the bucket IS the group
-        nats kv put 550e8400-e29b-41d4-a716-446655440000 metadata '{\"id\":\"550e8400-e29b-41d4-a716-446655440000\",\"name\":\"Administrators\",\"description\":\"System administrators group\",\"created_at\":\"2024-01-15T10:00:00Z\"}';
-        nats kv put 550e8400-e29b-41d4-a716-446655440000 members.123e4567-e89b-12d3-a456-426614174000 '{\"user_id\":\"123e4567-e89b-12d3-a456-426614174000\",\"joined_at\":\"2024-01-15T10:05:00Z\",\"role\":\"admin\"}';
-        nats kv put 550e8400-e29b-41d4-a716-446655440000 members.234e5678-e89b-12d3-a456-426614174001 '{\"user_id\":\"234e5678-e89b-12d3-a456-426614174001\",\"joined_at\":\"2024-01-15T10:10:00Z\",\"role\":\"member\"}';
-        nats kv put 550e8400-e29b-41d4-a716-446655440000 permissions.perm-admin-api '{\"id\":\"perm-admin-api\",\"resource\":\"api\",\"action\":\"admin\",\"effect\":\"allow\"}';
-        nats kv put 550e8400-e29b-41d4-a716-446655440000 permissions.perm-admin-users '{\"id\":\"perm-admin-users\",\"resource\":\"users\",\"action\":\"manage\",\"effect\":\"allow\"}';
+        echo 'Populating ReadOnly Users group (tenant 770e8400-e29b-41d4-a716-446655440002)...';
+        nats kv put POLICY_DATA 770e8400-e29b-41d4-a716-446655440002.metadata '{\"id\":\"770e8400-e29b-41d4-a716-446655440002\",\"name\":\"ReadOnly Users\",\"description\":\"Read-only access group\",\"created_at\":\"2024-01-15T11:00:00Z\"}';
+        nats kv put POLICY_DATA 770e8400-e29b-41d4-a716-446655440002.members.456e7890-e89b-12d3-a456-426614174003 '{\"user_id\":\"456e7890-e89b-12d3-a456-426614174003\",\"joined_at\":\"2024-01-15T11:05:00Z\",\"role\":\"member\"}';
+        nats kv put POLICY_DATA 770e8400-e29b-41d4-a716-446655440002.permissions.perm-readonly-data '{\"id\":\"perm-readonly-data\",\"resource\":\"data\",\"action\":\"read\",\"effect\":\"allow\"}';
 
-        echo 'Populating Developers group (bucket: 660e8400-e29b-41d4-a716-446655440001)...';
-        nats kv put 660e8400-e29b-41d4-a716-446655440001 metadata '{\"id\":\"660e8400-e29b-41d4-a716-446655440001\",\"name\":\"Developers\",\"description\":\"Development team group\",\"created_at\":\"2024-01-15T10:30:00Z\"}';
-        nats kv put 660e8400-e29b-41d4-a716-446655440001 members.345e6789-e89b-12d3-a456-426614174002 '{\"user_id\":\"345e6789-e89b-12d3-a456-426614174002\",\"joined_at\":\"2024-01-15T10:35:00Z\",\"role\":\"lead\"}';
-        nats kv put 660e8400-e29b-41d4-a716-446655440001 members.234e5678-e89b-12d3-a456-426614174001 '{\"user_id\":\"234e5678-e89b-12d3-a456-426614174001\",\"joined_at\":\"2024-01-15T10:40:00Z\",\"role\":\"member\"}';
-        nats kv put 660e8400-e29b-41d4-a716-446655440001 permissions.perm-dev-code '{\"id\":\"perm-dev-code\",\"resource\":\"code\",\"action\":\"write\",\"effect\":\"allow\"}';
-        nats kv put 660e8400-e29b-41d4-a716-446655440001 permissions.perm-dev-deploy '{\"id\":\"perm-dev-deploy\",\"resource\":\"deployment\",\"action\":\"deploy\",\"effect\":\"allow\"}';
-
-        echo 'Populating ReadOnly Users group (bucket: 770e8400-e29b-41d4-a716-446655440002)...';
-        nats kv put 770e8400-e29b-41d4-a716-446655440002 metadata '{\"id\":\"770e8400-e29b-41d4-a716-446655440002\",\"name\":\"ReadOnly Users\",\"description\":\"Read-only access group\",\"created_at\":\"2024-01-15T11:00:00Z\"}';
-        nats kv put 770e8400-e29b-41d4-a716-446655440002 members.456e7890-e89b-12d3-a456-426614174003 '{\"user_id\":\"456e7890-e89b-12d3-a456-426614174003\",\"joined_at\":\"2024-01-15T11:05:00Z\",\"role\":\"member\"}';
-        nats kv put 770e8400-e29b-41d4-a716-446655440002 permissions.perm-readonly-data '{\"id\":\"perm-readonly-data\",\"resource\":\"data\",\"action\":\"read\",\"effect\":\"allow\"}';
-
-        echo 'Populating default bucket with user group assignments...';
-        # User-group assignments go to the default bucket since they are not group-specific
-        nats kv put permit-groups-default metadata '{\"id\":\"permit-groups-default\",\"name\":\"Default Group\",\"description\":\"Default group for non-grouped data\",\"created_at\":\"2024-01-15T10:00:00Z\"}';
-
-        nats kv put permit-groups-default users '[\"550e8400-e29b-41d4-a716-446655440000\",\"660e8400-e29b-41d4-a716-446655440001\"]';
-        # nats kv put permit-groups-default users.234e5678-e89b-12d3-a456-426614174001.groups '[\"150e8400-e29b-41d4-a716-446655440000\",\"660e8400-e29b-41d4-a716-446655440001\"]';
-        # nats kv put permit-groups-default users.345e6789-e89b-12d3-a456-426614174002.groups '[\"160e8400-e29b-41d4-a716-446655440001\"]';
-        # nats kv put permit-groups-default users.456e7890-e89b-12d3-a456-426614174003.groups '[\"170e8400-e29b-41d4-a716-446655440002\"]';
-        # nats kv put permit-groups-default users.123e4567-e89b-12d3-a456-426614174000.groups '[\"150e8400-e29b-41d4-a716-446655440000\"]';
+        echo 'Populating the root tenant (permit-groups-default mounts at the OPA data root)...';
+        nats kv put POLICY_DATA permit-groups-default.metadata '{\"id\":\"permit-groups-default\",\"name\":\"Default Group\",\"description\":\"Default group for non-grouped data\",\"created_at\":\"2024-01-15T10:00:00Z\"}';
+        nats kv put POLICY_DATA permit-groups-default.users '[\"550e8400-e29b-41d4-a716-446655440000\",\"660e8400-e29b-41d4-a716-446655440001\"]';
 
         echo 'Test data added successfully';
         echo '';
-        echo 'Created buckets:';
+        echo 'Bucket:';
         nats kv list;
         echo '';
         echo 'Sample verification:';
-        echo 'Administrators group metadata (bucket 550e8400-e29b-41d4-a716-446655440000):';
-        nats kv get 550e8400-e29b-41d4-a716-446655440000 metadata;
+        echo 'Administrators group metadata (tenant 550e8400-...):';
+        nats kv get POLICY_DATA 550e8400-e29b-41d4-a716-446655440000.metadata;
         echo '';
-        echo 'Developers group members (bucket 660e8400-e29b-41d4-a716-446655440001):';
-        nats kv ls 660e8400-e29b-41d4-a716-446655440001 | grep members;
+        echo 'Developers group keys (tenant 660e8400-...):';
+        nats kv ls POLICY_DATA | grep 660e8400-e29b-41d4-a716-446655440001;
         echo '';
-        echo 'User group assignments (default bucket):';
-        nats kv get permit-groups-default users.234e5678-e89b-12d3-a456-426614174001.groups;
-        echo '';
-        echo 'Setup complete - ready for bucket-per-group UUID testing';
-        echo 'Architecture: Each group UUID is its own NATS bucket containing that groups metadata, members, and permissions';
-        echo 'User group assignments stored in default bucket since they span multiple groups';
+        echo 'Setup complete - single muxed bucket POLICY_DATA, keys <tenant>.<key>';
+        echo 'Architecture: one bucket; each group UUID is the leading key token (the tenant);';
+        echo 'the plugin reads only a tenant slice via a prefix-filtered watch.';
       "
     networks:
       - nats-net
@@ -138,10 +121,12 @@ services:
     ports:
       - "8181:8181"
     volumes:
-      - ./config.yaml:/config/config.yaml
+      # In-compose OPA must reach NATS via the service name, so mount the
+      # compose config (server_url=nats://nats:4222), NOT config.yaml's
+      # host-friendly localhost default — otherwise `localhost:4222` resolves to
+      # the OPA container itself and the plugin can't reach NATS.
+      - ./config-compose.yaml:/config/config.yaml
       - ./rego:/policies
-    environment:
-      - NATS_URL=nats://nats:4222
     networks:
       - nats-net
 

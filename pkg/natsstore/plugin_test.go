@@ -17,7 +17,8 @@ func TestPluginFactory_Validate(t *testing.T) {
 	// Test with minimal config
 	minimalConfig := map[string]interface{}{
 		"server_url":  "nats://localhost:4222",
-		"root_bucket": "test_bucket",
+		"bucket":      "DATA",
+		"root_tenant": "test_bucket",
 	}
 
 	configBytes, err := json.Marshal(minimalConfig)
@@ -28,16 +29,18 @@ func TestPluginFactory_Validate(t *testing.T) {
 		Store: inmem.New(),
 	}
 
-	// Validate the configuration
+	// Validate the configuration. These gate a *Config deref below, so use
+	// require: if Validate fails (e.g. NATS is unreachable) the test must STOP
+	// here, not fall through and nil-deref-panic the whole test binary.
 	validatedConfig, err := factory.Validate(manager, configBytes)
-	assert.NoError(t, err)
-	assert.NotNil(t, validatedConfig)
+	require.NoError(t, err)
+	require.NotNil(t, validatedConfig)
 
 	// Check that it's the right type
 	config, ok := validatedConfig.(*Config)
-	assert.True(t, ok)
+	require.True(t, ok)
 	assert.Equal(t, "nats://localhost:4222", config.ServerURL)
-	assert.Equal(t, "test_bucket", config.RootBucket)
+	assert.Equal(t, "test_bucket", config.RootTenant)
 }
 
 func TestPluginFactory_New(t *testing.T) {
@@ -45,7 +48,8 @@ func TestPluginFactory_New(t *testing.T) {
 
 	config := DefaultConfig()
 	config.ServerURL = "nats://localhost:4222"
-	config.RootBucket = "test_bucket"
+	config.Bucket = "POLICY_DATA"
+	config.RootTenant = "test_bucket"
 
 	// Create a minimal manager for testing
 	manager := &plugins.Manager{
@@ -73,17 +77,25 @@ func TestPlugin_ConfigValidation(t *testing.T) {
 		expectError bool
 	}{
 		{
-			name: "valid minimal config with root bucket",
+			name: "valid minimal config with root tenant",
 			config: map[string]interface{}{
 				"server_url":  "nats://localhost:4222",
-				"root_bucket": "test_bucket",
+				"bucket":      "DATA",
+				"root_tenant": "test_tenant",
 			},
 			expectError: false,
 		},
 		{
 			name: "missing server_url",
 			config: map[string]interface{}{
-				"root_bucket": "test_bucket",
+				"bucket": "DATA",
+			},
+			expectError: true,
+		},
+		{
+			name: "missing bucket",
+			config: map[string]interface{}{
+				"server_url": "nats://localhost:4222",
 			},
 			expectError: true,
 		},
@@ -91,7 +103,7 @@ func TestPlugin_ConfigValidation(t *testing.T) {
 			name: "valid config with max_bucket_watchers",
 			config: map[string]interface{}{
 				"server_url":          "nats://localhost:4222",
-				"root_bucket":         "test_bucket",
+				"bucket":              "DATA",
 				"max_bucket_watchers": 5,
 			},
 			expectError: false,
@@ -120,7 +132,8 @@ func TestPlugin_DataInjectionArchitecture(t *testing.T) {
 	// Create a minimal config for data injection testing
 	config := DefaultConfig()
 	config.ServerURL = "nats://localhost:4222"
-	config.RootBucket = "test_bucket"
+	config.Bucket = "POLICY_DATA"
+	config.RootTenant = "test_bucket"
 
 	// Note: Since we can't test actual NATS connectivity without a NATS server,
 	// this test focuses on the plugin architecture and configuration validation
@@ -133,19 +146,21 @@ func TestPlugin_DataInjectionArchitecture(t *testing.T) {
 	configBytes, err := json.Marshal(config)
 	require.NoError(t, err)
 
+	// require: these gate the *Plugin deref below; a failure (e.g. NATS down)
+	// must stop the test rather than nil-deref-panic the whole binary.
 	validatedConfig, err := factory.Validate(manager, configBytes)
-	assert.NoError(t, err)
-	assert.NotNil(t, validatedConfig)
+	require.NoError(t, err)
+	require.NotNil(t, validatedConfig)
 
 	// Verify the factory has the right store (original store, not a composite)
 	assert.Equal(t, manager.Store, factory.Store())
 
 	// Create plugin
 	plugin := factory.New(manager, validatedConfig)
-	assert.NotNil(t, plugin)
+	require.NotNil(t, plugin)
 
 	natsPlugin, ok := plugin.(*Plugin)
-	assert.True(t, ok)
+	require.True(t, ok)
 	assert.NotNil(t, natsPlugin.bucketDataManager)
 
 	logger.Info("Data injection architecture test completed successfully")
@@ -158,7 +173,9 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, 10, config.MaxBucketsWatchers)
 	assert.NotZero(t, config.TTL)
 	assert.NotZero(t, config.RefreshInterval)
-	assert.Equal(t, "", config.RootBucket)
+	assert.Equal(t, "", config.RootTenant)
+	// Bucket has no implicit default: it is mandatory and must be set explicitly.
+	assert.Equal(t, "", config.Bucket)
 }
 
 // Note: Integration tests with actual NATS server would go in a separate file

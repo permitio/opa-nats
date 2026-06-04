@@ -136,6 +136,7 @@ func TestConfig_Validate(t *testing.T) {
 			name: "valid config",
 			config: &Config{
 				ServerURL: "nats://localhost:4222",
+				Bucket:    "DATA",
 			},
 			expectError: false,
 		},
@@ -154,6 +155,14 @@ func TestConfig_Validate(t *testing.T) {
 			},
 			expectError: true,
 			errorMsg:    "server_url is required",
+		},
+		{
+			name: "missing bucket - single muxed bucket is required",
+			config: &Config{
+				ServerURL: "nats://localhost:4222",
+			},
+			expectError: true,
+			errorMsg:    "bucket is required",
 		},
 	}
 
@@ -182,6 +191,7 @@ func TestConfig_ValidateWithDefaults(t *testing.T) {
 			name: "valid config",
 			config: &Config{
 				ServerURL: "nats://localhost:4222",
+				Bucket:    "DATA",
 			},
 			expectError: false,
 		},
@@ -212,12 +222,13 @@ func TestConfig_ValidateWithDefaults(t *testing.T) {
 func TestConfig_JSONMarshaling(t *testing.T) {
 	config := &Config{
 		ServerURL:            "nats://test:4222",
+		Bucket:               "DATA",
 		TTL:                  Duration(5 * time.Minute),
 		RefreshInterval:      Duration(10 * time.Second),
 		MaxReconnectAttempts: 5,
 		ReconnectWait:        Duration(1 * time.Second),
 		MaxBucketsWatchers:   20,
-		RootBucket:           "test-bucket",
+		RootTenant:           "test-bucket",
 	}
 
 	// Marshal to JSON
@@ -235,5 +246,6 @@ func TestConfig_JSONMarshaling(t *testing.T) {
 	assert.Equal(t, config.MaxReconnectAttempts, unmarshaled.MaxReconnectAttempts)
 	assert.Equal(t, config.ReconnectWait, unmarshaled.ReconnectWait)
 	assert.Equal(t, config.MaxBucketsWatchers, unmarshaled.MaxBucketsWatchers)
-	assert.Equal(t, config.RootBucket, unmarshaled.RootBucket)
+	assert.Equal(t, config.Bucket, unmarshaled.Bucket)
+	assert.Equal(t, config.RootTenant, unmarshaled.RootTenant)
 }

@@ -48,24 +48,33 @@ type Config struct {
 	MaxReconnectAttempts int      `json:"max_reconnect_attempts"`
 	ReconnectWait        Duration `json:"reconnect_wait"`
 
-	// Bucket-based watcher settings (MaxBucketsWatchers is the LRU cache size for bucket watchers)
-	MaxBucketsWatchers int `json:"max_bucket_watchers,omitempty"` // LRU cache size for bucket watchers
+	// Bucket is the single muxed NATS K/V bucket that holds every tenant's data,
+	// keyed as "<tenant>.<key...>". Required. The first key token is the tenant,
+	// which the Rego-facing layer addresses as the "bucket_id".
+	Bucket string `json:"bucket"`
 
-	// root bucket name
-	RootBucket string `json:"root_bucket,omitempty"` // Explicit bucket name to always use
+	// Tenant-watcher settings (MaxBucketsWatchers is the LRU cache size for per-tenant watchers)
+	MaxBucketsWatchers int `json:"max_bucket_watchers,omitempty"` // LRU cache size for tenant watchers
 
+	// RootTenant, if set, is a tenant whose subtree mounts at the OPA data root
+	// (its leading tenant token is stripped) instead of under data.nats.kv.<tenant>.
+	RootTenant string `json:"root_tenant,omitempty"`
 }
 
 // DefaultConfig returns a default configuration.
 func DefaultConfig() *Config {
 	return &Config{
-		ServerURL:            "nats://localhost:4222",
+		ServerURL: "nats://localhost:4222",
+		// Bucket is intentionally left empty: the muxed bucket name is MANDATORY
+		// and must be set explicitly by the deployment config (validated as
+		// "bucket is required"). There is no implicit default to avoid silently
+		// reading the wrong bucket.
 		TTL:                  Duration(10 * time.Minute),
 		RefreshInterval:      Duration(30 * time.Second),
 		MaxReconnectAttempts: 10,
 		ReconnectWait:        Duration(2 * time.Second),
-		MaxBucketsWatchers:   10, // Maximum concurrent bucket watchers (cache size)
-		RootBucket:           "", // Optional single bucket mode
+		MaxBucketsWatchers:   10, // Maximum concurrent per-tenant watchers (cache size)
+		RootTenant:           "", // Optional: a tenant that mounts at the data root
 	}
 }
 
@@ -73,6 +82,9 @@ func DefaultConfig() *Config {
 func (c *Config) Validate() error {
 	if c.ServerURL == "" {
 		return fmt.Errorf("server_url is required")
+	}
+	if c.Bucket == "" {
+		return fmt.Errorf("bucket is required")
 	}
 
 	return nil
