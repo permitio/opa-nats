@@ -41,7 +41,7 @@ The plugin can be configured through OPA's configuration system. Here's an examp
 plugins:
   nats:
     server_url: "nats://localhost:4222"
-    bucket: "DATA"   # REQUIRED: the single muxed K/V bucket holding every tenant
+    bucket: "POLICY_DATA"   # REQUIRED: the single muxed K/V bucket holding every tenant
                      # as keys "<tenant>.<key...>"
     ttl: "10m"
     refresh_interval: "30s"
@@ -74,12 +74,13 @@ services:
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `server_url` | string | `"nats://localhost:4222"` | NATS server URL |
+| `bucket` | string | **(required)** | The single muxed K/V bucket name (keys `<tenant>.<key>`). Mandatory — no default; must match the producer's bucket. |
 | `ttl` | duration | `"10m"` | TTL for cache entries |
 | `refresh_interval` | duration | `"30s"` | How often to refresh cache from NATS |
 | `max_reconnect_attempts` | int | `10` | Maximum reconnection attempts |
 | `reconnect_wait` | duration | `"2s"` | Wait time between reconnection attempts |
 | `max_bucket_watchers` | int | `10` | Maximum number of bucket watchers in LRU cache |
-| `root_bucket` | string | `""` | Root bucket name for default data (optional) |
+| `root_tenant` | string | `""` | A tenant whose subtree mounts at the OPA data root instead of under `data.nats.kv.<tenant>` (optional) |
 | `credentials` | string | `""` | Path to NATS credentials file |
 | `token` | string | `""` | NATS token for authentication |
 | `username` | string | `""` | NATS username |
@@ -285,11 +286,11 @@ accounts: {
     jetstream: enabled
     users: [
       {user: "opa", pass: "secret", permissions: {
-        # Scope to the single muxed bucket (DATA). The plugin is a multi-tenant
+        # Scope to the single muxed bucket (POLICY_DATA). The plugin is a multi-tenant
         # cloud reader living in the shared account, so it sees all tenants;
         # narrow further per-deployment if desired.
-        subscribe: ["$JS.API.>", "$KV.DATA.>"]
-        publish: ["$JS.API.>", "$KV.DATA.>"]
+        subscribe: ["$JS.API.>", "$KV.POLICY_DATA.>"]
+        publish: ["$JS.API.>", "$KV.POLICY_DATA.>"]
       }}
     ]
   }

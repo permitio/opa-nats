@@ -64,8 +64,11 @@ type Config struct {
 // DefaultConfig returns a default configuration.
 func DefaultConfig() *Config {
 	return &Config{
-		ServerURL:            "nats://localhost:4222",
-		Bucket:               "DATA", // the single muxed bucket holding all tenants
+		ServerURL: "nats://localhost:4222",
+		// Bucket is intentionally left empty: the muxed bucket name is MANDATORY
+		// and must be set explicitly by the deployment config (validated as
+		// "bucket is required"). There is no implicit default to avoid silently
+		// reading the wrong bucket.
 		TTL:                  Duration(10 * time.Minute),
 		RefreshInterval:      Duration(30 * time.Second),
 		MaxReconnectAttempts: 10,

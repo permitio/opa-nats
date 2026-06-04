@@ -46,6 +46,7 @@ func TestPluginFactory_New(t *testing.T) {
 
 	config := DefaultConfig()
 	config.ServerURL = "nats://localhost:4222"
+	config.Bucket = "POLICY_DATA"
 	config.RootTenant = "test_bucket"
 
 	// Create a minimal manager for testing
@@ -129,6 +130,7 @@ func TestPlugin_DataInjectionArchitecture(t *testing.T) {
 	// Create a minimal config for data injection testing
 	config := DefaultConfig()
 	config.ServerURL = "nats://localhost:4222"
+	config.Bucket = "POLICY_DATA"
 	config.RootTenant = "test_bucket"
 
 	// Note: Since we can't test actual NATS connectivity without a NATS server,
@@ -168,6 +170,8 @@ func TestDefaultConfig(t *testing.T) {
 	assert.NotZero(t, config.TTL)
 	assert.NotZero(t, config.RefreshInterval)
 	assert.Equal(t, "", config.RootTenant)
+	// Bucket has no implicit default: it is mandatory and must be set explicitly.
+	assert.Equal(t, "", config.Bucket)
 }
 
 // Note: Integration tests with actual NATS server would go in a separate file
