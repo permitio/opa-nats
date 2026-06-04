@@ -3,12 +3,10 @@ package natsstore
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
-	"github.com/nats-io/nats.go"
 	"github.com/open-policy-agent/opa/v1/ast"
 	"github.com/open-policy-agent/opa/v1/logging"
 	"github.com/open-policy-agent/opa/v1/plugins"
@@ -64,9 +62,13 @@ func (f *PluginFactory) watchBucketBuiltin(bctx rego.BuiltinContext, inputTerm *
 	// Bucket not watched yet - load data into cache and start watching
 	bucketGjson, err := f.loadTenantAsGJSON(bctx.Context, bucketName)
 	if err != nil {
-		if errors.Is(err, nats.ErrBucketNotFound) {
-			return ast.BooleanTerm(false), nil
-		}
+		// Surface the error instead of failing open to "not watched". With the
+		// single muxed bucket, an absent *tenant* yields zero keys (handled by
+		// loadTenantAsGJSON returning a Null result, no error), so a
+		// nats.ErrBucketNotFound here means the *configured* bucket is missing —
+		// a deployment misconfiguration. Returning false would silently evaluate
+		// policy against missing data; this is consistent with get_data, which
+		// also returns the error.
 		return nil, fmt.Errorf("failed to load bucket data: %w", err)
 	}
 
