@@ -1,3 +1,5 @@
-
-# build artifact (compiled binary)
+# build artifacts (compiled binaries)
+# `go build -o opa ./cmd/opa-nats` (Dockerfile, README) -> opa
+# bare `go build ./cmd/opa-nats`                          -> opa-nats
+/opa
 /opa-nats
