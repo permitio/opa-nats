@@ -289,6 +289,14 @@ accounts: {
         # Scope to the single muxed bucket (POLICY_DATA). The plugin is a multi-tenant
         # cloud reader living in the shared account, so it sees all tenants;
         # narrow further per-deployment if desired.
+        #
+        # Caveats:
+        #  - `$JS.API.>` is account-wide JetStream API access (manage/observe every
+        #    stream and KV bucket in this account). For genuine least privilege,
+        #    scope it to this bucket's API subjects instead of granting `>`.
+        #  - The bucket name must stay in lockstep with the plugin's `bucket`
+        #    config: if you change `bucket`, change `$KV.<bucket>.>` here too, or
+        #    the watch is silently denied.
         subscribe: ["$JS.API.>", "$KV.POLICY_DATA.>"]
         publish: ["$JS.API.>", "$KV.POLICY_DATA.>"]
       }}
