@@ -11,20 +11,16 @@ import (
 	"github.com/open-policy-agent/opa/v1/storage"
 )
 
-// DataTransformer handles conversion between NATS keys and OPA store paths
+// DataTransformer handles conversion between NATS keys and OPA store paths.
+// Root-vs-tenant placement is decided per call by NATSKeyToOPAPath's isRoot
+// argument, so the transformer holds no tenant/bucket state.
 type DataTransformer struct {
-	rootBucket string
-	logger     logging.Logger
+	logger logging.Logger
 }
 
 // NewDataTransformer creates a new data transformer
-func NewDataTransformer(config *Config, logger logging.Logger) (*DataTransformer, error) {
-	dt := &DataTransformer{
-		rootBucket: config.RootTenant,
-		logger:     logger,
-	}
-
-	return dt, nil
+func NewDataTransformer(logger logging.Logger) (*DataTransformer, error) {
+	return &DataTransformer{logger: logger}, nil
 }
 
 // NATSKeyToOPAPath converts a full muxed NATS key into an OPA storage path.
@@ -78,7 +74,7 @@ func (dt *DataTransformer) LoadBucketDataBulk(ctx context.Context, bucketName st
 	// the whole muxed bucket. bucketName is the tenant token. Keys are full
 	// muxed keys ("<tenant>.<rest>").
 	dt.logger.Debug("Getting keys for tenant %s", bucketName)
-	keys, err := natsClient.tenantKeys(bucketName)
+	keys, err := natsClient.tenantKeys(ctx, bucketName)
 	if err != nil {
 		dt.logger.Error("Failed to list keys for tenant %s: %v", bucketName, err)
 		return fmt.Errorf("failed to list keys for tenant %s: %w", bucketName, err)

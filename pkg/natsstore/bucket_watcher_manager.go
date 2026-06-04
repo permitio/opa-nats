@@ -66,6 +66,11 @@ func (gw *BucketWatcher) Start() error {
 		return nil
 	}
 
+	// Reject unsafe tenant tokens before they become a NATS subject filter.
+	if err := validateTenant(gw.bucketName); err != nil {
+		return err
+	}
+
 	// Open the single muxed bucket (handle is cached).
 	kv, err := gw.natsClient.getBucket()
 	if err != nil {
@@ -245,7 +250,7 @@ type BucketWatcherManager struct {
 // NewBucketWatcherManager creates a new bucket watcher manager.
 func NewBucketWatcherManager(natsClient *NATSClient, maxWatchers int, logger logging.Logger, config *Config) (*BucketWatcherManager, error) {
 	// Create data transformer
-	dataTransformer, err := NewDataTransformer(config, logger)
+	dataTransformer, err := NewDataTransformer(logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create data transformer: %w", err)
 	}

@@ -62,7 +62,7 @@ func (f *PluginFactory) watchBucketBuiltin(bctx rego.BuiltinContext, inputTerm *
 	}
 
 	// Bucket not watched yet - load data into cache and start watching
-	bucketGjson, err := f.loadTenantAsGJSON(bucketName)
+	bucketGjson, err := f.loadTenantAsGJSON(bctx.Context, bucketName)
 	if err != nil {
 		if errors.Is(err, nats.ErrBucketNotFound) {
 			return ast.BooleanTerm(false), nil
@@ -116,7 +116,7 @@ func (f *PluginFactory) getDataBuiltin(bctx rego.BuiltinContext, bucketTerm *ast
 	// Cache miss - load directly from NATS with warning
 	f.logger.Warn("Warning: Cache miss for bucket %s, key %s. Loading directly from NATS.\n", bucketName, dotNotationKey)
 
-	bucketGjson, err := f.loadTenantAsGJSON(bucketName)
+	bucketGjson, err := f.loadTenantAsGJSON(bctx.Context, bucketName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load bucket data: %w", err)
 	}
@@ -137,8 +137,13 @@ func (f *PluginFactory) getDataBuiltin(bctx rego.BuiltinContext, bucketTerm *ast
 // buildTenantJSON builds a tenant-relative JSON document from muxed keys.
 // Each key is "<tenant>.<sub...>"; the "<tenant>." prefix is stripped so the
 // resulting tree is tenant-relative (e.g. "t1.members" -> "members"). Keys
-// outside the tenant's subtree are skipped. get returns the raw JSON value
-// bytes for a full key.
+// outside the tenant's subtree are skipped.
+//
+// get returns the raw value bytes for a full key, or nil to signal the key
+// should be SKIPPED (e.g. its Get failed) — a skipped key is omitted entirely
+// rather than written as an explicit null, since a key flipping to null can
+// change an authz decision. A non-JSON value is stored as a JSON string,
+// mirroring loadSingleKey, so this read path and the bulk-load path agree.
 func buildTenantJSON(tenant string, keys []string, get func(key string) []byte) []byte {
 	prefix := tenant + "."
 	jsonBytes := []byte("{}")
@@ -147,7 +152,24 @@ func buildTenantJSON(tenant string, keys []string, get func(key string) []byte) 
 		if !ok || sub == "" {
 			continue // not this tenant's key, or the bare tenant token
 		}
-		jsonBytes, _ = sjson.SetRawBytes(jsonBytes, sub, get(k))
+		value := get(k)
+		if value == nil {
+			continue // get failed for this key — skip, don't inject null
+		}
+		if !json.Valid(value) {
+			// Non-JSON stored value: keep it as a JSON string instead of
+			// corrupting the document with raw bytes.
+			if quoted, err := json.Marshal(string(value)); err == nil {
+				value = quoted
+			} else {
+				continue
+			}
+		}
+		next, err := sjson.SetRawBytes(jsonBytes, sub, value)
+		if err != nil {
+			continue // don't corrupt the document on a single bad key
+		}
+		jsonBytes = next
 	}
 	return jsonBytes
 }
@@ -155,14 +177,14 @@ func buildTenantJSON(tenant string, keys []string, get func(key string) []byte) 
 // loadTenantAsGJSON builds a tenant-relative gjson document by reading ONLY the
 // tenant's slice of the muxed bucket (prefix-filtered), with the "<tenant>."
 // prefix stripped so callers address keys tenant-relatively.
-func (f *PluginFactory) loadTenantAsGJSON(tenant string) (*gjson.Result, error) {
+func (f *PluginFactory) loadTenantAsGJSON(ctx context.Context, tenant string) (*gjson.Result, error) {
 	bdm := f.getBucketDataManager()
 	if bdm == nil {
 		return nil, fmt.Errorf("bucket data manager not available")
 	}
 
 	// List ONLY this tenant's keys (filtered watch) — never enumerate the bucket.
-	keys, err := bdm.natsClient.tenantKeys(tenant)
+	keys, err := bdm.natsClient.tenantKeys(ctx, tenant)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list keys for tenant %s: %w", tenant, err)
 	}
@@ -178,7 +200,10 @@ func (f *PluginFactory) loadTenantAsGJSON(tenant string) (*gjson.Result, error) 
 	jsonBytes := buildTenantJSON(tenant, keys, func(key string) []byte {
 		entry, err := kv.Get(key)
 		if err != nil {
-			return []byte("null") // skip failed keys
+			// Return nil so buildTenantJSON omits the key instead of writing an
+			// explicit null on a transient Get error.
+			bdm.logger.Warn("Skipping key %s for tenant %s: get failed: %v", key, tenant, err)
+			return nil
 		}
 		return entry.Value()
 	})

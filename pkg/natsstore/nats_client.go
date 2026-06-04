@@ -1,6 +1,7 @@
 package natsstore
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"strings"
@@ -49,6 +50,11 @@ func (nc *NATSClient) connect() error {
 		}),
 		nats.ReconnectHandler(func(_ *nats.Conn) {
 			nc.logger.Info("NATS reconnected")
+			// Drop the cached bucket handle so the next getBucket re-opens it;
+			// the JetStream context/handle may have gone stale across the drop.
+			nc.mu.Lock()
+			nc.bucket = nil
+			nc.mu.Unlock()
 			nc.setConnected(true)
 		}),
 		nats.ClosedHandler(func(_ *nats.Conn) {
@@ -146,27 +152,61 @@ func (nc *NATSClient) getBucket() (nats.KeyValue, error) {
 	return kv, nil
 }
 
+// validateTenant rejects tenant ids that are unsafe as a single NATS subject
+// token. Real tenants are environment UUID hex (only [0-9a-f]); this fail-closed
+// guard stops a dotted/wildcard/whitespace id from making the subject-token
+// watch filter ("<tenant>.>") and the plain string-prefix read paths disagree,
+// which could otherwise read another tenant's subtree or match every tenant.
+func validateTenant(tenant string) error {
+	if tenant == "" {
+		return fmt.Errorf("empty tenant id")
+	}
+	if strings.ContainsAny(tenant, ".*> \t\r\n") {
+		return fmt.Errorf(
+			"invalid tenant id %q: must be a single NATS subject token "+
+				"(no '.', '*', '>', or whitespace)", tenant)
+	}
+	return nil
+}
+
 // tenantKeys lists the current keys belonging to one tenant ("<tenant>.*")
 // WITHOUT enumerating the whole muxed bucket. It uses a single-filter watch
 // drained to the initial-values marker, so the work is O(tenant), not O(all
 // tenants). The returned keys are full muxed keys ("<tenant>.<rest>").
-func (nc *NATSClient) tenantKeys(tenant string) ([]string, error) {
+//
+// It binds the watch to ctx and selects on ctx.Done() so a stall cannot block a
+// Rego query / plugin Start indefinitely. A channel close BEFORE the nil
+// initial-values marker (e.g. a connection drop) is treated as an error rather
+// than silently returning a truncated key set — partial tenant data in an authz
+// plugin can flip allow/deny.
+func (nc *NATSClient) tenantKeys(ctx context.Context, tenant string) ([]string, error) {
+	if err := validateTenant(tenant); err != nil {
+		return nil, err
+	}
 	kv, err := nc.getBucket()
 	if err != nil {
 		return nil, err
 	}
-	w, err := kv.Watch(tenant+".>", nats.IgnoreDeletes(), nats.MetaOnly())
+	w, err := kv.Watch(tenant+".>", nats.IgnoreDeletes(), nats.MetaOnly(), nats.Context(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("failed to list keys for tenant %s: %w", tenant, err)
 	}
 	defer func() { _ = w.Stop() }()
 
 	var keys []string
-	for entry := range w.Updates() {
-		if entry == nil { // initial values delivered
-			break
+	for {
+		select {
+		case entry, ok := <-w.Updates():
+			if !ok {
+				return nil, fmt.Errorf(
+					"watch for tenant %s closed before initial values completed", tenant)
+			}
+			if entry == nil { // initial values delivered
+				return keys, nil
+			}
+			keys = append(keys, entry.Key())
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		}
-		keys = append(keys, entry.Key())
 	}
-	return keys, nil
 }

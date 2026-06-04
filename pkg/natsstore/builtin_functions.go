@@ -33,7 +33,7 @@ func NewBucketDataManager(config *Config, logger logging.Logger) (*BucketDataMan
 	}
 
 	// Create data transformer
-	dataTransformer, err := NewDataTransformer(config, logger)
+	dataTransformer, err := NewDataTransformer(logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create data transformer: %w", err)
 	}

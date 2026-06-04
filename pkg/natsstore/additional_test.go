@@ -17,9 +17,8 @@ import (
 // Test more complex scenarios and edge cases
 
 func TestDataTransformer_ensureParentPaths_Comprehensive(t *testing.T) {
-	config := DefaultConfig()
 	logger := logging.Get()
-	dt, err := NewDataTransformer(config, logger)
+	dt, err := NewDataTransformer(logger)
 	require.NoError(t, err)
 
 	store := NewMockStore()
@@ -61,9 +60,8 @@ func TestDataTransformer_ensureParentPaths_Comprehensive(t *testing.T) {
 }
 
 func TestDataTransformer_ensureParentPathsRecursive_Comprehensive(t *testing.T) {
-	config := DefaultConfig()
 	logger := logging.Get()
-	dt, err := NewDataTransformer(config, logger)
+	dt, err := NewDataTransformer(logger)
 	require.NoError(t, err)
 
 	store := NewMockStore()
@@ -105,9 +103,8 @@ func TestDataTransformer_ensureParentPathsRecursive_Comprehensive(t *testing.T) 
 }
 
 func TestDataTransformer_createNestedStructure_Comprehensive(t *testing.T) {
-	config := DefaultConfig()
 	logger := logging.Get()
-	dt, err := NewDataTransformer(config, logger)
+	dt, err := NewDataTransformer(logger)
 	require.NoError(t, err)
 
 	store := NewMockStore()

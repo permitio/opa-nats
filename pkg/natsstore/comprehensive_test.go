@@ -14,9 +14,8 @@ import (
 // Test DataTransformer functions that don't require NATS connection
 
 func TestDataTransformer_NATSKeyToOPAPath_Comprehensive(t *testing.T) {
-	config := DefaultConfig()
 	logger := logging.Get()
-	dt, err := NewDataTransformer(config, logger)
+	dt, err := NewDataTransformer(logger)
 	require.NoError(t, err)
 
 	// Single muxed bucket: the NATS key is the FULL muxed key "<tenant>.<rest...>".
@@ -118,6 +117,45 @@ func TestBuildTenantJSON(t *testing.T) {
 	// other tenants are excluded entirely
 	assert.False(t, res.Get("secret").Exists())
 	assert.False(t, res.Get("t2.secret").Exists())
+}
+
+func TestBuildTenantJSON_SkipsFailedGetAndQuotesNonJSON(t *testing.T) {
+	keys := []string{"t1.ok", "t1.failed", "t1.plain"}
+	get := func(k string) []byte {
+		switch k {
+		case "t1.ok":
+			return []byte(`{"a":1}`)
+		case "t1.failed":
+			return nil // get failed for this key
+		case "t1.plain":
+			return []byte("not-json")
+		}
+		return nil
+	}
+
+	res := gjson.ParseBytes(buildTenantJSON("t1", keys, get))
+
+	// a failed get omits the key entirely — it must NOT become an explicit null
+	// (a key flipping to null can change an authz decision).
+	assert.False(t, res.Get("failed").Exists())
+	// valid JSON is preserved as-is
+	assert.Equal(t, float64(1), res.Get("ok.a").Value())
+	// a non-JSON value is stored as a JSON string (mirrors loadSingleKey) instead
+	// of corrupting the whole document
+	assert.Equal(t, gjson.String, res.Get("plain").Type)
+	assert.Equal(t, "not-json", res.Get("plain").String())
+}
+
+func TestValidateTenant(t *testing.T) {
+	// real tenants are env UUID hex; these must pass
+	for _, v := range []string{"550e8400e29b41d4a716446655440000", "abc", "a-b_c", "ABC123"} {
+		assert.NoError(t, validateTenant(v), "expected %q to be valid", v)
+	}
+	// anything that isn't a single safe NATS subject token must be rejected,
+	// so the subject-token watch and the string-prefix read can't diverge
+	for _, v := range []string{"", "a.b", ".", "*", ">", "a*", "a>b", "a b", "a\tb", "a\nb"} {
+		assert.Error(t, validateTenant(v), "expected %q to be rejected", v)
+	}
 }
 
 // Test NATSClient functions that don't require connection
@@ -378,9 +416,8 @@ func TestMockStore_DataOperations(t *testing.T) {
 // Test some simple error conditions and edge cases
 
 func TestDataTransformer_ensureParentPaths_EdgeCases(t *testing.T) {
-	config := DefaultConfig()
 	logger := logging.Get()
-	dt, err := NewDataTransformer(config, logger)
+	dt, err := NewDataTransformer(logger)
 	require.NoError(t, err)
 
 	store := NewMockStore()

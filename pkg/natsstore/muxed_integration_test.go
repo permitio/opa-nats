@@ -1,3 +1,11 @@
+//go:build integration
+
+// Integration tests that talk to a real NATS/JetStream server. Run with
+//
+//	go test -tags=integration ./...
+//
+// They are excluded from the default unit suite so a plain `go test ./...` on a
+// host that happens to have NATS on :4222 doesn't create/delete real KV buckets.
 package natsstore
 
 import (
@@ -51,22 +59,22 @@ func TestMuxedTenantIsolation_Integration(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("tenantKeys returns only the tenant's slice", func(t *testing.T) {
-		k1, err := client.tenantKeys("t1")
+		k1, err := client.tenantKeys(context.Background(), "t1")
 		require.NoError(t, err)
 		assert.ElementsMatch(t, []string{"t1.members", "t1.profile.name"}, k1)
 
-		k2, err := client.tenantKeys("t2")
+		k2, err := client.tenantKeys(context.Background(), "t2")
 		require.NoError(t, err)
 		assert.ElementsMatch(t, []string{"t2.secret"}, k2)
 
 		// an unknown tenant gets nothing (not the whole bucket)
-		k3, err := client.tenantKeys("t9")
+		k3, err := client.tenantKeys(context.Background(), "t9")
 		require.NoError(t, err)
 		assert.Empty(t, k3)
 	})
 
 	t.Run("bulk load places tenant data at data.nats.kv.<tenant> and excludes others", func(t *testing.T) {
-		dt, err := NewDataTransformer(cfg, logging.Get())
+		dt, err := NewDataTransformer(logging.Get())
 		require.NoError(t, err)
 		store := NewMockStore()
 
@@ -86,7 +94,7 @@ func TestMuxedTenantIsolation_Integration(t *testing.T) {
 	})
 
 	t.Run("root tenant strips the tenant token to the data root", func(t *testing.T) {
-		dt, err := NewDataTransformer(cfg, logging.Get())
+		dt, err := NewDataTransformer(logging.Get())
 		require.NoError(t, err)
 		store := NewMockStore()
 

@@ -29,14 +29,16 @@ func TestPluginFactory_Validate(t *testing.T) {
 		Store: inmem.New(),
 	}
 
-	// Validate the configuration
+	// Validate the configuration. These gate a *Config deref below, so use
+	// require: if Validate fails (e.g. NATS is unreachable) the test must STOP
+	// here, not fall through and nil-deref-panic the whole test binary.
 	validatedConfig, err := factory.Validate(manager, configBytes)
-	assert.NoError(t, err)
-	assert.NotNil(t, validatedConfig)
+	require.NoError(t, err)
+	require.NotNil(t, validatedConfig)
 
 	// Check that it's the right type
 	config, ok := validatedConfig.(*Config)
-	assert.True(t, ok)
+	require.True(t, ok)
 	assert.Equal(t, "nats://localhost:4222", config.ServerURL)
 	assert.Equal(t, "test_bucket", config.RootTenant)
 }
@@ -144,19 +146,21 @@ func TestPlugin_DataInjectionArchitecture(t *testing.T) {
 	configBytes, err := json.Marshal(config)
 	require.NoError(t, err)
 
+	// require: these gate the *Plugin deref below; a failure (e.g. NATS down)
+	// must stop the test rather than nil-deref-panic the whole binary.
 	validatedConfig, err := factory.Validate(manager, configBytes)
-	assert.NoError(t, err)
-	assert.NotNil(t, validatedConfig)
+	require.NoError(t, err)
+	require.NotNil(t, validatedConfig)
 
 	// Verify the factory has the right store (original store, not a composite)
 	assert.Equal(t, manager.Store, factory.Store())
 
 	// Create plugin
 	plugin := factory.New(manager, validatedConfig)
-	assert.NotNil(t, plugin)
+	require.NotNil(t, plugin)
 
 	natsPlugin, ok := plugin.(*Plugin)
-	assert.True(t, ok)
+	require.True(t, ok)
 	assert.NotNil(t, natsPlugin.bucketDataManager)
 
 	logger.Info("Data injection architecture test completed successfully")
