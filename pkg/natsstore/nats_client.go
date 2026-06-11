@@ -104,8 +104,12 @@ func (nc *NATSClient) connect() error {
 	nc.conn = conn
 	nc.setConnected(true)
 
-	// Create JetStream context
-	js, err := conn.JetStream()
+	// Create JetStream context, scoped to the configured domain when set
+	var jsOpts []nats.JSOpt
+	if nc.config.Domain != "" {
+		jsOpts = append(jsOpts, nats.Domain(nc.config.Domain))
+	}
+	js, err := conn.JetStream(jsOpts...)
 	if err != nil {
 		return fmt.Errorf("failed to create JetStream context: %w", err)
 	}

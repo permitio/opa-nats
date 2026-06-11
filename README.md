@@ -89,6 +89,7 @@ services:
 | `tls_key` | string | `""` | Path to TLS private key |
 | `tls_ca_cert` | string | `""` | Path to TLS CA certificate |
 | `tls_insecure` | bool | `false` | Skip TLS certificate verification |
+| `domain` | string | `""` | JetStream domain; scopes API calls to `$JS.<domain>.API`. Needed when NATS is reached across a leafnode boundary (optional) |
 
 ## Built-in Functions
 

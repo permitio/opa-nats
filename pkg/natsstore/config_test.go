@@ -229,6 +229,7 @@ func TestConfig_JSONMarshaling(t *testing.T) {
 		ReconnectWait:        Duration(1 * time.Second),
 		MaxBucketsWatchers:   20,
 		RootTenant:           "test-bucket",
+		Domain:               "cloud",
 	}
 
 	// Marshal to JSON
@@ -248,4 +249,5 @@ func TestConfig_JSONMarshaling(t *testing.T) {
 	assert.Equal(t, config.MaxBucketsWatchers, unmarshaled.MaxBucketsWatchers)
 	assert.Equal(t, config.Bucket, unmarshaled.Bucket)
 	assert.Equal(t, config.RootTenant, unmarshaled.RootTenant)
+	assert.Equal(t, config.Domain, unmarshaled.Domain)
 }

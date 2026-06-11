@@ -42,6 +42,13 @@ type Config struct {
 	TLSCACert    string `json:"tls_ca_cert,omitempty"`
 	TLSInsecure  bool   `json:"tls_insecure,omitempty"`
 
+	// Domain is an optional JetStream domain. When set, JetStream API calls are
+	// scoped to $JS.<domain>.API instead of the default $JS.API. Required when
+	// the target cluster is reached across a leafnode boundary; harmless for
+	// direct connections since the server serves its own domain prefix locally.
+	// Empty preserves the default (domain-less) prefix.
+	Domain string `json:"domain,omitempty"`
+
 	// Cache settings
 	TTL                  Duration `json:"ttl"`
 	RefreshInterval      Duration `json:"refresh_interval"`
