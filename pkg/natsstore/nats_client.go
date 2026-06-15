@@ -101,15 +101,22 @@ func (nc *NATSClient) connect() error {
 		return fmt.Errorf("failed to connect to NATS server: %w", err)
 	}
 
-	nc.conn = conn
-	nc.setConnected(true)
-
-	// Create JetStream context
-	js, err := conn.JetStream()
+	// Create JetStream context, scoped to the configured domain when set
+	var jsOpts []nats.JSOpt
+	if nc.config.Domain != "" {
+		jsOpts = append(jsOpts, nats.Domain(nc.config.Domain))
+	}
+	js, err := conn.JetStream(jsOpts...)
 	if err != nil {
+		// Close the connection so a JetStream init failure doesn't leak it;
+		// only mark the client connected once setup fully succeeds.
+		conn.Close()
 		return fmt.Errorf("failed to create JetStream context: %w", err)
 	}
+
+	nc.conn = conn
 	nc.js = js
+	nc.setConnected(true)
 
 	nc.logger.Info("Connected to NATS at %s", nc.config.ServerURL)
 	return nil
