@@ -95,7 +95,9 @@ func (gw *BucketWatcher) Start() error {
 	// Start watching in background
 	go gw.watchLoop()
 
-	gw.logger.Debug("Started bucket watcher for bucket %s", gw.bucketName)
+	// Info, not Debug: at the default log level operators need to be able to
+	// tell "watching this bucket, no updates yet" from "never started watching".
+	gw.logger.Info("Started bucket watcher for bucket %s", gw.bucketName)
 	return nil
 }
 
@@ -152,7 +154,7 @@ func (gw *BucketWatcher) Stop() error {
 		}
 	}
 	gw.started = false
-	gw.logger.Debug("Stopped bucket watcher for: %s", gw.bucketName)
+	gw.logger.Info("Stopped bucket watcher for: %s", gw.bucketName)
 	if err := gw.cleanOPAStore(); err != nil {
 		gw.logger.Warn("Failed to clean OPA store for bucket %s: %v", gw.bucketName, err)
 		// we don't consider this as failing to stop the watcher
@@ -181,12 +183,46 @@ func (gw *BucketWatcher) watchLoop() {
 	}
 }
 
+// kvOpName renders a NATS K/V operation as the short, stable token used in
+// logs. nats.KeyValueOp.String() renders "KeyValuePutOp" / "KeyValueDeleteOp",
+// which is noisier than the "put" / "delete" / "purge" operators grep for.
+func kvOpName(op nats.KeyValueOp) string {
+	switch op {
+	case nats.KeyValuePut:
+		return "put"
+	case nats.KeyValueDelete:
+		return "delete"
+	case nats.KeyValuePurge:
+		return "purge"
+	default:
+		return fmt.Sprintf("unknown(%d)", op)
+	}
+}
+
 // handleKVUpdate processes a K/V update for this bucket.
+//
+// Every applied update is logged at Info, not Debug. This plugin is typically
+// the only consumer of the keys it watches, so at the default log level a
+// silent success was indistinguishable from "the watcher never saw the key".
+// The entry's value is deliberately never logged — it is caller data.
 func (gw *BucketWatcher) handleKVUpdate(entry nats.KeyValueEntry) {
 	key := entry.Key()
-	path := gw.natsClient.keyToPath(key)
+	op := entry.Operation()
+	opName := kvOpName(op)
+	revision := entry.Revision()
 
-	switch entry.Operation() {
+	// Log the OPA path the write actually targets rather than the key split
+	// on dots: this is the path an operator queries in OPA to verify that the
+	// update landed. It is the same mapping InjectDataToOPAStore performs, so
+	// a failure here is a failure there too — report it and skip the write.
+	path, err := gw.dataTransformer.NATSKeyToOPAPath(key, gw.isRoot)
+	if err != nil {
+		gw.logger.Error("Failed to map NATS K/V %s to an OPA path for bucket %s, key %s (revision %d): %v",
+			opName, gw.bucketName, key, revision, err)
+		return
+	}
+
+	switch op {
 	case nats.KeyValuePut:
 		var value any
 		if err := json.Unmarshal(entry.Value(), &value); err != nil {
@@ -196,19 +232,29 @@ func (gw *BucketWatcher) handleKVUpdate(entry nats.KeyValueEntry) {
 
 		// Inject into OPA store
 		if err := gw.dataTransformer.InjectDataToOPAStore(gw.ctx, gw.opaStore, gw.bucketName, key, value, gw.isRoot); err != nil {
-			gw.logger.Error("Failed to inject data to OPA store for bucket %s, key %s: %v", gw.bucketName, key, err)
-		} else {
-			gw.logger.Debug("Injected update to OPA store for bucket %s, path: %v", gw.bucketName, path)
+			gw.logger.Error("Failed to inject data to OPA store for bucket %s, key %s (op %s, path %s, revision %d): %v",
+				gw.bucketName, key, opName, path, revision, err)
+			return
 		}
 
 	case nats.KeyValueDelete, nats.KeyValuePurge:
 		// Remove from OPA store
 		if err := gw.dataTransformer.InjectDataToOPAStore(gw.ctx, gw.opaStore, gw.bucketName, key, nil, gw.isRoot); err != nil {
-			gw.logger.Error("Failed to remove data from OPA store for bucket %s, key %s: %v", gw.bucketName, key, err)
-		} else {
-			gw.logger.Debug("Removed from OPA store for bucket %s, path: %v", gw.bucketName, path)
+			gw.logger.Error("Failed to remove data from OPA store for bucket %s, key %s (op %s, path %s, revision %d): %v",
+				gw.bucketName, key, opName, path, revision, err)
+			return
 		}
+
+	default:
+		// Unreachable for today's nats.go (put/delete/purge are the only K/V
+		// operations), but a future one must not be dropped silently.
+		gw.logger.Warn("Ignoring unsupported NATS K/V operation %s for bucket %s, key %s (revision %d)",
+			opName, gw.bucketName, key, revision)
+		return
 	}
+
+	gw.logger.Info("Applied NATS K/V %s to OPA store: bucket=%s key=%s path=%s revision=%d",
+		opName, gw.bucketName, key, path, revision)
 }
 
 // BucketWatcherManager manages multiple bucket watchers with LRU eviction.

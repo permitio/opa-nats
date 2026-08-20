@@ -358,7 +358,22 @@ This library uses GitHub Actions for CI, including linting, build, security chec
 
 ### Logs
 
-The plugin uses structured logging. Enable debug logging to see detailed operation:
+The plugin uses structured logging. At the default `info` level it reports every
+K/V update it applies to the OPA store, so you can confirm that data actually
+landed without turning on debug logging:
+
+```
+Started bucket watcher for bucket b1
+Applied NATS K/V put to OPA store: bucket=b1 key=b1.users.123 path=/nats/kv/b1/users/123 revision=7
+Applied NATS K/V delete to OPA store: bucket=b1 key=b1.users.123 path=/nats/kv/b1/users/123 revision=8
+```
+
+`bucket` is the leading key token (the `bucket_id` the Rego interface addresses),
+and `path` is the OPA path the update was written to — query it (e.g.
+`data.nats.kv.b1.users`) to verify the result. Entry values are never logged, at
+any level.
+
+Enable debug logging to see detailed operation:
 
 ```yaml
 plugins:
