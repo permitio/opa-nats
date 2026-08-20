@@ -96,8 +96,8 @@ func (gw *BucketWatcher) Start() error {
 	go gw.watchLoop()
 
 	// Info, not Debug: at the default log level operators need to be able to
-	// tell "watching this tenant, no updates yet" from "never started watching".
-	gw.logger.Info("Started bucket watcher for tenant %s", gw.bucketName)
+	// tell "watching this bucket, no updates yet" from "never started watching".
+	gw.logger.Info("Started bucket watcher for bucket %s", gw.bucketName)
 	return nil
 }
 
@@ -154,7 +154,7 @@ func (gw *BucketWatcher) Stop() error {
 		}
 	}
 	gw.started = false
-	gw.logger.Info("Stopped bucket watcher for tenant %s", gw.bucketName)
+	gw.logger.Info("Stopped bucket watcher for: %s", gw.bucketName)
 	if err := gw.cleanOPAStore(); err != nil {
 		gw.logger.Warn("Failed to clean OPA store for bucket %s: %v", gw.bucketName, err)
 		// we don't consider this as failing to stop the watcher
@@ -201,11 +201,10 @@ func kvOpName(op nats.KeyValueOp) string {
 
 // handleKVUpdate processes a K/V update for this bucket.
 //
-// Every applied update is logged at Info, not Debug: on the Edge PDP
-// POLICY_DATA plane this plugin is the only consumer of these keys, so at the
-// default log level a silent success was indistinguishable from "the watcher
-// never saw the key". The entry's value is deliberately never logged — it is
-// policy data.
+// Every applied update is logged at Info, not Debug. This plugin is typically
+// the only consumer of the keys it watches, so at the default log level a
+// silent success was indistinguishable from "the watcher never saw the key".
+// The entry's value is deliberately never logged — it is caller data.
 func (gw *BucketWatcher) handleKVUpdate(entry nats.KeyValueEntry) {
 	key := entry.Key()
 	op := entry.Operation()
@@ -218,7 +217,7 @@ func (gw *BucketWatcher) handleKVUpdate(entry nats.KeyValueEntry) {
 	// a failure here is a failure there too — report it and skip the write.
 	path, err := gw.dataTransformer.NATSKeyToOPAPath(key, gw.isRoot)
 	if err != nil {
-		gw.logger.Error("Failed to map NATS K/V %s to an OPA path for tenant %s, key %s (revision %d): %v",
+		gw.logger.Error("Failed to map NATS K/V %s to an OPA path for bucket %s, key %s (revision %d): %v",
 			opName, gw.bucketName, key, revision, err)
 		return
 	}
@@ -249,12 +248,12 @@ func (gw *BucketWatcher) handleKVUpdate(entry nats.KeyValueEntry) {
 	default:
 		// Unreachable for today's nats.go (put/delete/purge are the only K/V
 		// operations), but a future one must not be dropped silently.
-		gw.logger.Warn("Ignoring unsupported NATS K/V operation %s for tenant %s, key %s (revision %d)",
+		gw.logger.Warn("Ignoring unsupported NATS K/V operation %s for bucket %s, key %s (revision %d)",
 			opName, gw.bucketName, key, revision)
 		return
 	}
 
-	gw.logger.Info("Applied NATS K/V %s to OPA store: tenant=%s key=%s path=%s revision=%d",
+	gw.logger.Info("Applied NATS K/V %s to OPA store: bucket=%s key=%s path=%s revision=%d",
 		opName, gw.bucketName, key, path, revision)
 }
 

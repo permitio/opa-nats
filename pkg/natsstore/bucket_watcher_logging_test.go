@@ -77,7 +77,7 @@ type fakeKVEntry struct {
 	op       nats.KeyValueOp
 }
 
-func (f fakeKVEntry) Bucket() string             { return "permit" }
+func (f fakeKVEntry) Bucket() string             { return "DATA" }
 func (f fakeKVEntry) Key() string                { return f.key }
 func (f fakeKVEntry) Value() []byte              { return f.value }
 func (f fakeKVEntry) Revision() uint64           { return f.revision }
@@ -88,7 +88,7 @@ func (f fakeKVEntry) Operation() nats.KeyValueOp { return f.op }
 // newLoggingTestWatcher builds a BucketWatcher wired to a real in-memory OPA
 // store and a recording logger — enough for handleKVUpdate, which needs no
 // NATS connection of its own (the entry is handed to it directly).
-func newLoggingTestWatcher(t *testing.T, tenant string, isRoot bool) (*BucketWatcher, *recordingLogger, storage.Store) {
+func newLoggingTestWatcher(t *testing.T, bucket string, isRoot bool) (*BucketWatcher, *recordingLogger, storage.Store) {
 	t.Helper()
 	logger := &recordingLogger{}
 	transformer, err := NewDataTransformer(logger)
@@ -98,7 +98,7 @@ func newLoggingTestWatcher(t *testing.T, tenant string, isRoot bool) (*BucketWat
 	t.Cleanup(cancel)
 
 	return &BucketWatcher{
-		bucketName:        tenant,
+		bucketName:        bucket,
 		dataTransformer:   transformer,
 		opaStore:          store,
 		logger:            logger,
@@ -112,7 +112,7 @@ func newLoggingTestWatcher(t *testing.T, tenant string, isRoot bool) (*BucketWat
 
 // TestHandleKVUpdate_LogsAppliedUpdatesAtInfo covers the PER-15709 acceptance
 // criteria: every applied operation is visible at the default log level and
-// carries tenant, key, OPA path, operation and revision.
+// carries bucket, key, OPA path, operation and revision.
 func TestHandleKVUpdate_LogsAppliedUpdatesAtInfo(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -149,7 +149,7 @@ func TestHandleKVUpdate_LogsAppliedUpdatesAtInfo(t *testing.T) {
 			infos := logger.atLevel(logging.Info)
 			require.Len(t, infos, 1, "expected exactly one Info log per applied update, got: %v", infos)
 			msg := infos[0]
-			assert.Contains(t, msg, "tenant=t1")
+			assert.Contains(t, msg, "bucket=t1")
 			assert.Contains(t, msg, "key=t1.users.123")
 			assert.Contains(t, msg, "path="+tt.wantPath)
 			assert.Contains(t, msg, "revision="+fmt.Sprint(tt.entry.revision))
@@ -160,10 +160,10 @@ func TestHandleKVUpdate_LogsAppliedUpdatesAtInfo(t *testing.T) {
 	}
 }
 
-// TestHandleKVUpdate_LogsRootTenantPath verifies the Info log reports the
-// root-tenant OPA path (tenant token stripped, mounted at the data root)
+// TestHandleKVUpdate_LogsRootBucketPath verifies the Info log reports the
+// root-bucket OPA path (leading key token stripped, mounted at the data root)
 // rather than the raw key split on dots.
-func TestHandleKVUpdate_LogsRootTenantPath(t *testing.T) {
+func TestHandleKVUpdate_LogsRootBucketPath(t *testing.T) {
 	gw, logger, _ := newLoggingTestWatcher(t, "root", true)
 
 	gw.handleKVUpdate(fakeKVEntry{key: "root.policies.abac", value: []byte(`{"x":1}`), revision: 3, op: nats.KeyValuePut})
@@ -210,7 +210,7 @@ func TestHandleKVUpdate_AppliesUpdateToStore(t *testing.T) {
 func TestHandleKVUpdate_UnmappableKeyLogsErrorNotInfo(t *testing.T) {
 	gw, logger, _ := newLoggingTestWatcher(t, "root", true)
 
-	// A root key with no sub-key beyond the tenant token has no OPA path.
+	// A root key with no sub-key beyond the leading token has no OPA path.
 	gw.handleKVUpdate(fakeKVEntry{key: "root", value: []byte(`{}`), revision: 2, op: nats.KeyValuePut})
 
 	assert.Empty(t, logger.atLevel(logging.Info), "a failed update must not log as applied")
